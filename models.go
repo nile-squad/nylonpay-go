@@ -38,6 +38,7 @@ const (
 	UGX Currency = "UGX"
 	TZS Currency = "TZS"
 	RWF Currency = "RWF"
+
 )
 
 type Customer struct {
