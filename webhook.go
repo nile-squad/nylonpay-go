@@ -5,9 +5,9 @@ import (
 	"github.com/nile-squad/nylonpay-go/types"
 )
 
-// VerifyWebhook validates the HMAC-SHA256 signature on an inbound webhook and
-// checks the embedded timestamp is within the replay-prevention window.
-func (c *NylonPayClient) VerifyWebhook(input types.VerifyWebhookInput) bool {
+// VerifyWebhookSignature validates the HMAC-SHA256 signature on an inbound
+// webhook and checks the embedded timestamp is within the replay-prevention window.
+func (c *NylonPayClient) VerifyWebhookSignature(input types.VerifyWebhookInput) bool {
 	var tol *int
 	if input.ToleranceSeconds != nil {
 		seconds := int(input.ToleranceSeconds.Seconds())

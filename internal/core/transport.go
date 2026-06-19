@@ -61,12 +61,8 @@ func (t *Transport) Send(ctx context.Context, req TransportRequest, out any) err
 		"X-Nylon-Signature": {signature},
 	}
 
-	maxAttempts := t.config.MaxRetries
-	if maxAttempts == 0 {
-		maxAttempts = 1
-	}
-
-	for attempt := 0; attempt <= maxAttempts; attempt++ {
+	// attempt 0 is the initial request; 1..MaxRetries are retries.
+	for attempt := 0; attempt <= t.config.MaxRetries; attempt++ {
 		attemptCtx, cancel := context.WithTimeout(ctx, t.config.Timeout)
 
 		httpReq, err := http.NewRequestWithContext(attemptCtx, http.MethodPost, t.config.BaseURL, bytes.NewBuffer(bodyBytes))
@@ -88,7 +84,7 @@ func (t *Transport) Send(ctx context.Context, req TransportRequest, out any) err
 				msg = fmt.Sprintf("Request timed out after %v", t.config.Timeout)
 			}
 
-			if attempt < maxAttempts {
+			if attempt < t.config.MaxRetries {
 				time.Sleep(calculateBackoff(attempt))
 				continue
 			}
@@ -105,7 +101,7 @@ func (t *Transport) Send(ctx context.Context, req TransportRequest, out any) err
 
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 			retryable := RetryableStatusCodes[resp.StatusCode]
-			if retryable && attempt < maxAttempts {
+			if retryable && attempt < t.config.MaxRetries {
 				time.Sleep(calculateBackoff(attempt))
 				continue
 			}

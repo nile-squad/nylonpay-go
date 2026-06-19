@@ -9,6 +9,9 @@ type PaymentEvent string
 type Currency string
 type TransactionMode string
 
+// InstanceEventType identifies a lifecycle event emitted by a PaymentInstance.
+type InstanceEventType string
+
 const (
 	TransactionStatusPending    TransactionStatus = "pending"
 	TransactionStatusSuccessful TransactionStatus = "successful"
@@ -44,6 +47,13 @@ const (
 
 	TransactionModeLive TransactionMode = "live"
 	TransactionModeTest TransactionMode = "test"
+
+	// PaymentInstance lifecycle events.
+	InstanceEventProcessing InstanceEventType = "processing"
+	InstanceEventSuccess    InstanceEventType = "success"
+	InstanceEventFailed     InstanceEventType = "failed"
+	InstanceEventCancelled  InstanceEventType = "cancelled"
+	InstanceEventError      InstanceEventType = "error"
 )
 
 type Customer struct {
@@ -154,3 +164,15 @@ type VerifyWebhookInput struct {
 	Secret           string
 	ToleranceSeconds *time.Duration
 }
+
+// InstanceEventData is delivered to every handler registered via On or Once.
+type InstanceEventData struct {
+	Event       InstanceEventType
+	Reference   string
+	Transaction *Transaction // non-nil on terminal (success/failed/cancelled) events
+	Err         error        // non-nil on failed and error events
+	At          time.Time    // UTC timestamp; format with time.RFC3339 for ISO 8601
+}
+
+// InstanceHandler is the callback type for PaymentInstance event listeners.
+type InstanceHandler func(InstanceEventData)

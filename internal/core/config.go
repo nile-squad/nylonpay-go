@@ -22,7 +22,6 @@ type TransportConfig struct {
 type PaymentInstanceConfig struct {
 	Reference        string
 	InitialStatus    string
-	InitialError     error
 	FetchStatus      func(ctx context.Context, ref string) (string, error)
 	FetchTransaction func(ctx context.Context, ref string) (*types.Transaction, error)
 	PollInterval     time.Duration

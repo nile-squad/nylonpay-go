@@ -20,7 +20,7 @@ type Client interface {
 	GetTransaction(ctx context.Context, input types.GetTransactionInput) (*types.Transaction, error)
 	VerifyPhone(ctx context.Context, phoneNumber string) (*types.PhoneVerification, error)
 	CreateInvoice(ctx context.Context, input types.CreateInvoicePayload) (*types.InvoiceResponse, error)
-	VerifyWebhook(input types.VerifyWebhookInput) bool
+	VerifyWebhookSignature(input types.VerifyWebhookInput) bool
 }
 
 // Config holds credentials and behaviour settings for a NylonPayClient.
@@ -37,12 +37,16 @@ type Config struct {
 }
 
 // Hooks holds optional lifecycle callbacks that fire around SDK operations.
-// A panicking hook is recovered and treated as a no-op so it cannot crash the caller.
+// A panicking hook is recovered and, if OnError is set, notified before the
+// SDK falls back to safe defaults.
 type Hooks struct {
 	BeforeCollect func(*types.CollectPaymentPayload) *types.CollectPaymentPayload
 	AfterCollect  func(*types.CollectPaymentPayload, string, string, error)
 	BeforePayout  func(*types.MakePayoutPayload) *types.MakePayoutPayload
 	AfterPayout   func(*types.MakePayoutPayload, string, string, error)
+	// OnError is called whenever a hook panics, receiving the hook name and
+	// recovered value as an error. Optional but strongly recommended.
+	OnError func(hook string, err error)
 }
 
 // NylonPayClient is the concrete implementation of Client.
@@ -58,6 +62,9 @@ var _ Client = (*NylonPayClient)(nil)
 func NewClient(cfg Config) (*NylonPayClient, error) {
 	if cfg.Timeout == 0 {
 		cfg.Timeout = 30 * time.Second
+	}
+	if cfg.MaxRetries == 0 {
+		cfg.MaxRetries = core.MAX_RETRIES
 	}
 	if cfg.APIKey == "" {
 		return nil, &core.SDKError{Category: "validation", Message: "apiKey is required"}

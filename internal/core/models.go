@@ -8,10 +8,10 @@ import (
 )
 
 const (
-	BASE_URL            = "https://api.nylonpay.com"
-	TIMEOUT             = 10 * time.Second
+	BASE_URL            = "https://api.nylonpay.nilesquad.com/api/services"
+	TIMEOUT             = 30 * time.Second
 	MAX_RETRIES         = 3
-	SDKService          = "nylon_sdk"
+	SDKService          = "sdk"
 	DefaultPollInterval = 2 * time.Second
 	DefaultPollDuration = 5 * time.Minute
 	DefaultPollAttempts = 150

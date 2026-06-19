@@ -9,8 +9,10 @@ import (
 )
 
 // CollectPayment initiates an asynchronous mobile-money or bank collection.
-// It returns a PaymentInstance immediately; call instance.Wait(ctx) to block
+// Returns a PaymentInstance immediately; call instance.Wait(ctx) to block
 // until the payment reaches a terminal state.
+//
+// An error is returned (and no instance created) if the initiation request
 func (c *NylonPayClient) CollectPayment(ctx context.Context, input types.CollectPaymentPayload) (*core.PaymentInstance, error) {
 	ref, err := c.resolveReference(input.Reference)
 	if err != nil {
@@ -32,24 +34,20 @@ func (c *NylonPayClient) CollectPayment(ctx context.Context, input types.Collect
 		Reference string `json:"reference"`
 		Status    string `json:"status"`
 	}
-	err = c.transport.Send(ctx, core.TransportRequest{Action: "collect_payment", Payload: payload}, &initResp)
-
-	if c.cfg.Hooks != nil && c.cfg.Hooks.AfterCollect != nil {
-		c.runAfterCollectHook(c.cfg.Hooks.AfterCollect, payload, initResp.Reference, initResp.Status, err)
+	if err := c.transport.Send(ctx, core.TransportRequest{Action: "collect_payment", Payload: payload}, &initResp); err != nil {
+		if c.cfg.Hooks != nil && c.cfg.Hooks.AfterCollect != nil {
+			c.runAfterCollectHook(c.cfg.Hooks.AfterCollect, payload, "", "", err)
+		}
+		return nil, err
 	}
 
-	initialStatus := "pending"
-	var initialErr error
-	if err != nil {
-		initialErr = err
-	} else {
-		initialStatus = initResp.Status
+	if c.cfg.Hooks != nil && c.cfg.Hooks.AfterCollect != nil {
+		c.runAfterCollectHook(c.cfg.Hooks.AfterCollect, payload, initResp.Reference, initResp.Status, nil)
 	}
 
 	return core.NewPaymentInstance(core.PaymentInstanceConfig{
 		Reference:        input.Reference,
-		InitialStatus:    initialStatus,
-		InitialError:     initialErr,
+		InitialStatus:    initResp.Status,
 		FetchStatus:      c.rawFetchStatus,
 		FetchTransaction: c.rawFetchTransaction,
 		PollInterval:     c.cfg.MaxPollInterval,

@@ -12,8 +12,8 @@ import (
 )
 
 // PaymentInstance tracks an in-flight payment asynchronously.
-// Call Wait to block until a terminal state is reached, or poll Status for
-// non-blocking updates.
+// Call Wait to block until a terminal state, or poll Status for non-blocking
+// snapshots.
 type PaymentInstance struct {
 	mu               sync.RWMutex
 	reference        string
@@ -29,7 +29,8 @@ type PaymentInstance struct {
 	maxPollAttempts  int
 }
 
-// NewPaymentInstance creates and immediately starts polling a PaymentInstance.
+// NewPaymentInstance creates a PaymentInstance and immediately starts the
+// status-polling goroutine.
 func NewPaymentInstance(cfg PaymentInstanceConfig) *PaymentInstance {
 	if cfg.PollInterval == 0 {
 		cfg.PollInterval = DefaultPollInterval
@@ -44,19 +45,12 @@ func NewPaymentInstance(cfg PaymentInstanceConfig) *PaymentInstance {
 	pi := &PaymentInstance{
 		reference:        cfg.Reference,
 		status:           cfg.InitialStatus,
-		err:              cfg.InitialError,
 		done:             make(chan struct{}),
 		fetchStatus:      cfg.FetchStatus,
 		fetchTransaction: cfg.FetchTransaction,
 		pollInterval:     cfg.PollInterval,
 		maxPollDuration:  cfg.MaxPollDuration,
 		maxPollAttempts:  cfg.MaxPollAttempts,
-	}
-
-	if cfg.InitialError != nil {
-		pi.resolved = true
-		close(pi.done)
-		return pi
 	}
 
 	go pi.startPolling()
@@ -78,7 +72,8 @@ func (pi *PaymentInstance) Status() string {
 	return pi.status
 }
 
-// Transaction returns the final transaction record once resolved, or nil if still pending.
+// Transaction returns the final transaction record once resolved, or nil if
+// still pending.
 func (pi *PaymentInstance) Transaction() *types.Transaction {
 	pi.mu.RLock()
 	defer pi.mu.RUnlock()
@@ -86,6 +81,7 @@ func (pi *PaymentInstance) Transaction() *types.Transaction {
 }
 
 // Wait blocks until the payment reaches a terminal state or ctx is cancelled.
+// Returns the transaction on success, or (nil, err) on failure/cancellation/timeout.
 func (pi *PaymentInstance) Wait(ctx context.Context) (*types.Transaction, error) {
 	select {
 	case <-ctx.Done():

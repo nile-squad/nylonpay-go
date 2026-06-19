@@ -10,6 +10,9 @@ import (
 
 // MakePayout initiates an asynchronous outbound disbursement and returns a
 // PaymentInstance for tracking the transfer status.
+//
+// An error is returned (and no instance created) if the initiation request
+// itself fails.
 func (c *NylonPayClient) MakePayout(ctx context.Context, input types.MakePayoutPayload) (*core.PaymentInstance, error) {
 	ref, err := c.resolveReference(input.Reference)
 	if err != nil {
@@ -31,24 +34,20 @@ func (c *NylonPayClient) MakePayout(ctx context.Context, input types.MakePayoutP
 		Reference string `json:"reference"`
 		Status    string `json:"status"`
 	}
-	err = c.transport.Send(ctx, core.TransportRequest{Action: "make_payout", Payload: payload}, &initResp)
-
-	if c.cfg.Hooks != nil && c.cfg.Hooks.AfterPayout != nil {
-		c.runAfterPayoutHook(c.cfg.Hooks.AfterPayout, payload, initResp.Reference, initResp.Status, err)
+	if err := c.transport.Send(ctx, core.TransportRequest{Action: "make_payout", Payload: payload}, &initResp); err != nil {
+		if c.cfg.Hooks != nil && c.cfg.Hooks.AfterPayout != nil {
+			c.runAfterPayoutHook(c.cfg.Hooks.AfterPayout, payload, "", "", err)
+		}
+		return nil, err
 	}
 
-	initialStatus := "pending"
-	var initialErr error
-	if err != nil {
-		initialErr = err
-	} else {
-		initialStatus = initResp.Status
+	if c.cfg.Hooks != nil && c.cfg.Hooks.AfterPayout != nil {
+		c.runAfterPayoutHook(c.cfg.Hooks.AfterPayout, payload, initResp.Reference, initResp.Status, nil)
 	}
 
 	return core.NewPaymentInstance(core.PaymentInstanceConfig{
 		Reference:        input.Reference,
-		InitialStatus:    initialStatus,
-		InitialError:     initialErr,
+		InitialStatus:    initResp.Status,
 		FetchStatus:      c.rawFetchStatus,
 		FetchTransaction: c.rawFetchTransaction,
 		PollInterval:     c.cfg.MaxPollInterval,
