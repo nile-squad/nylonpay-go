@@ -5,6 +5,7 @@ import (
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -54,6 +55,30 @@ func GenerateFingerprint() string {
 	hash := sha256.Sum256([]byte(payload))
 
 	return hex.EncodeToString(hash[:])
+}
+
+func VerifyResponseSignature(data any, signature string, secret string) (bool, error) {
+	canonicalJSON, err := createCanonicalPayload(data)
+	if err != nil {
+		return false, fmt.Errorf("failed to canonicalize response data: %w", err)
+	}
+
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write([]byte(canonicalJSON))
+	expectedBytes := mac.Sum(nil)
+
+	providedBytes, err := hex.DecodeString(signature)
+	if err != nil {
+		return false, nil
+	}
+
+	if len(providedBytes) != len(expectedBytes) {
+		return false, nil
+	}
+
+	match := subtle.ConstantTimeCompare(providedBytes, expectedBytes) == 1
+
+	return match, nil
 }
 
 func CreateTimeStamp() string {
