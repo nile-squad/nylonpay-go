@@ -1,0 +1,91 @@
+package nylonpay
+
+import (
+	"context"
+
+	"github.com/nile-squad/nylonpay-go/internal/core"
+	"github.com/nile-squad/nylonpay-go/internal/utils"
+	"github.com/nile-squad/nylonpay-go/types"
+)
+
+// CollectPayment initiates an asynchronous mobile-money or bank collection.
+// It returns a PaymentInstance immediately; call instance.Wait(ctx) to block
+// until the payment reaches a terminal state.
+func (c *NylonPayClient) CollectPayment(ctx context.Context, input types.CollectPaymentPayload) (*core.PaymentInstance, error) {
+	ref, err := c.resolveReference(input.Reference)
+	if err != nil {
+		return nil, err
+	}
+	input.Reference = ref
+
+	if err := c.validateCollection(input); err != nil {
+		return nil, err
+	}
+	input.Customer.PhoneNumber = utils.NormalizePhone(input.Customer.PhoneNumber)
+
+	payload := &input
+	if c.cfg.Hooks != nil && c.cfg.Hooks.BeforeCollect != nil {
+		payload = c.runBeforeCollectHook(c.cfg.Hooks.BeforeCollect, payload)
+	}
+
+	var initResp struct {
+		Reference string `json:"reference"`
+		Status    string `json:"status"`
+	}
+	err = c.transport.Send(ctx, core.TransportRequest{Action: "collect_payment", Payload: payload}, &initResp)
+
+	if c.cfg.Hooks != nil && c.cfg.Hooks.AfterCollect != nil {
+		c.runAfterCollectHook(c.cfg.Hooks.AfterCollect, payload, initResp.Reference, initResp.Status, err)
+	}
+
+	initialStatus := "pending"
+	var initialErr error
+	if err != nil {
+		initialErr = err
+	} else {
+		initialStatus = initResp.Status
+	}
+
+	return core.NewPaymentInstance(core.PaymentInstanceConfig{
+		Reference:        input.Reference,
+		InitialStatus:    initialStatus,
+		InitialError:     initialErr,
+		FetchStatus:      c.rawFetchStatus,
+		FetchTransaction: c.rawFetchTransaction,
+		PollInterval:     c.cfg.MaxPollInterval,
+		MaxPollDuration:  c.cfg.MaxPollDuration,
+		MaxPollAttempts:  c.cfg.MaxPollAttempts,
+	}), nil
+}
+
+// CollectPaymentAndResolve initiates a collection and blocks until it reaches
+// a terminal state, then returns the completed transaction.
+func (c *NylonPayClient) CollectPaymentAndResolve(ctx context.Context, input types.CollectPaymentPayload) (*types.Transaction, error) {
+	ref, err := c.resolveReference(input.Reference)
+	if err != nil {
+		return nil, err
+	}
+	input.Reference = ref
+
+	if err := c.validateCollection(input); err != nil {
+		return nil, err
+	}
+	input.Customer.PhoneNumber = utils.NormalizePhone(input.Customer.PhoneNumber)
+
+	payload := &input
+	if c.cfg.Hooks != nil && c.cfg.Hooks.BeforeCollect != nil {
+		payload = c.runBeforeCollectHook(c.cfg.Hooks.BeforeCollect, payload)
+	}
+
+	var tx types.Transaction
+	err = c.transport.Send(ctx, core.TransportRequest{Action: "collect_payment_and_resolve", Payload: payload}, &tx)
+
+	if c.cfg.Hooks != nil && c.cfg.Hooks.AfterCollect != nil {
+		c.runAfterCollectHook(c.cfg.Hooks.AfterCollect, payload, tx.Reference, string(tx.Status), err)
+	}
+
+	if err != nil {
+		return nil, err
+	}
+	return &tx, nil
+}
