@@ -48,7 +48,6 @@ const (
 	TransactionModeLive TransactionMode = "live"
 	TransactionModeTest TransactionMode = "test"
 
-	// PaymentInstance lifecycle events.
 	InstanceEventProcessing InstanceEventType = "processing"
 	InstanceEventSuccess    InstanceEventType = "success"
 	InstanceEventFailed     InstanceEventType = "failed"
@@ -57,105 +56,105 @@ const (
 )
 
 type Customer struct {
-	Name        string
-	PhoneNumber string
-	Email       *string
+	Name        string  `json:"name"`
+	PhoneNumber string  `json:"phoneNumber"`
+	Email       *string `json:"email,omitempty"`
 }
 
 type Destination struct {
-	AccountHolderName string
-	AccountNumber     string
-	BankName          *string
-	Phone             *string
+	AccountHolderName string  `json:"accountHolderName"`
+	AccountNumber     string  `json:"accountNumber"`
+	BankName          *string `json:"bankName,omitempty"`
+	Phone             *string `json:"phone,omitempty"`
 }
 
 type InvoiceItem struct {
-	Name      string
-	Quantity  int
-	UnitPrice int64
+	Name      string `json:"name"`
+	Quantity  int    `json:"quantity"`
+	UnitPrice int64  `json:"unitPrice"`
 }
 
 type BankDetails struct {
-	AccountNumber string
-	BankName      string
+	AccountNumber string `json:"accountNumber"`
+	BankName      string `json:"bankName"`
 }
 
 type CollectPaymentPayload struct {
-	Amount      int64
-	Currency    Currency
-	Customer    Customer
-	Description string
-	Reference   string
-	Method      *PaymentMethod
-	Bank        *BankDetails
-	MetaData    *map[string]string
+	Amount      int64              `json:"amount"`
+	Currency    Currency           `json:"currency,omitempty"`
+	Customer    Customer           `json:"customer"`
+	Description string             `json:"description"`
+	Reference   string             `json:"reference,omitempty"`
+	Method      *PaymentMethod     `json:"method,omitempty"`
+	Bank        *BankDetails       `json:"bank,omitempty"`
+	MetaData    *map[string]string `json:"metadata,omitempty"`
 }
 
 type MakePayoutPayload struct {
-	Amount      int64
-	Currency    Currency
-	Customer    Customer
-	Destination Destination
-	Description string
-	Reference   string
-	MetaData    *map[string]string
+	Amount      int64              `json:"amount"`
+	Currency    Currency           `json:"currency,omitempty"`
+	Customer    Customer           `json:"customer"`
+	Destination Destination        `json:"destination"`
+	Description string             `json:"description"`
+	Reference   string             `json:"reference,omitempty"`
+	MetaData    *map[string]string `json:"metadata,omitempty"`
 }
 
 type CreateInvoicePayload struct {
-	Amount      int64
-	Currency    Currency
-	Description string
-	Items       *[]InvoiceItem
-	RedirectURL *string
-	Reference   string
-	MetaData    *map[string]string
+	Amount      int64              `json:"amount"`
+	Currency    Currency           `json:"currency,omitempty"`
+	Description string             `json:"description"`
+	Items       *[]InvoiceItem     `json:"items,omitempty"`
+	RedirectURL *string            `json:"redirectUrl,omitempty"`
+	Reference   string             `json:"reference,omitempty"`
+	MetaData    *map[string]string `json:"metadata,omitempty"`
 }
 
 type Transaction struct {
-	ID            string
-	Reference     string
-	Amount        int64
-	Currency      Currency
-	Status        TransactionStatus
-	Type          TransactionType
-	Method        PaymentMethod
-	Description   string
-	Duplicate     *bool
-	OperatorTid   *string
-	Phone         string
-	Email         *string
-	FailureReason *string
-	Metadata      *map[string]string
-	Mode          TransactionMode
-	CreatedAt     string
-	UpdatedAt     string
+	ID            string             `json:"id"`
+	Reference     string             `json:"reference"`
+	Amount        int64              `json:"amount"`
+	Currency      Currency           `json:"currency"`
+	Status        TransactionStatus  `json:"status"`
+	Type          TransactionType    `json:"type"`
+	Method        PaymentMethod      `json:"method"`
+	Description   string             `json:"description"`
+	Duplicate     *bool              `json:"duplicate,omitempty"`
+	OperatorTid   *string            `json:"operatorTid,omitempty"`
+	Phone         string             `json:"phone"`
+	Email         *string            `json:"email,omitempty"`
+	FailureReason *string            `json:"failureReason,omitempty"`
+	Metadata      *map[string]string `json:"metadata,omitempty"`
+	Mode          TransactionMode    `json:"mode"`
+	CreatedAt     string             `json:"createdAt"`
+	UpdatedAt     string             `json:"updatedAt"`
 }
 
 type StatusResponse struct {
-	Reference string
-	Status    TransactionStatus
-	Amount    int64
-	Currency  Currency
-	UpdatedAt string
+	Reference string            `json:"reference"`
+	Status    TransactionStatus `json:"status"`
+	Amount    int64             `json:"amount"`
+	Currency  Currency          `json:"currency"`
+	UpdatedAt string            `json:"updatedAt"`
 }
 
 type GetTransactionInput struct {
-	ID        string
-	Reference string
+	ID        string `json:"id,omitempty"`
+	Reference string `json:"reference,omitempty"`
 }
 
 type PhoneVerification struct {
-	PhoneNumber  string
-	CustomerName string
-	Verified     bool
+	PhoneNumber  string `json:"phoneNumber"`
+	CustomerName string `json:"customerName"`
+	Verified     bool   `json:"verified"`
 }
 
 type InvoiceResponse struct {
-	ID        string
-	Url       string
-	Token     string
-	ExpiresAt string
-	Status    string
+	ID        string `json:"id"`
+	Url       string `json:"url"`
+	Token     string `json:"token"`
+	ExpiresAt string `json:"expiresAt"`
+	Status    string `json:"status"`
 }
 
 type VerifyWebhookInput struct {
@@ -165,14 +164,12 @@ type VerifyWebhookInput struct {
 	ToleranceSeconds *time.Duration
 }
 
-// InstanceEventData is delivered to every handler registered via On or Once.
 type InstanceEventData struct {
 	Event       InstanceEventType
 	Reference   string
-	Transaction *Transaction // non-nil on terminal (success/failed/cancelled) events
-	Err         error        // non-nil on failed and error events
-	At          time.Time    // UTC timestamp; format with time.RFC3339 for ISO 8601
+	Transaction *Transaction
+	Err         error
+	At          time.Time
 }
 
-// InstanceHandler is the callback type for PaymentInstance event listeners.
 type InstanceHandler func(InstanceEventData)

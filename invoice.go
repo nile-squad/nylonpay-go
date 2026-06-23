@@ -38,7 +38,7 @@ func (c *NylonPayClient) CreateInvoice(ctx context.Context, input types.CreateIn
 	}
 
 	var resp types.InvoiceResponse
-	if err := c.transport.Send(ctx, core.TransportRequest{Action: "create_invoice", Payload: input}, &resp); err != nil {
+	if err := c.transport.Send(ctx, core.TransportRequest{Action: "sdk-create-invoice", Payload: input}, &resp); err != nil {
 		return nil, err
 	}
 	return &resp, nil

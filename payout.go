@@ -34,7 +34,7 @@ func (c *NylonPayClient) MakePayout(ctx context.Context, input types.MakePayoutP
 		Reference string `json:"reference"`
 		Status    string `json:"status"`
 	}
-	if err := c.transport.Send(ctx, core.TransportRequest{Action: "make_payout", Payload: payload}, &initResp); err != nil {
+	if err := c.transport.Send(ctx, core.TransportRequest{Action: "sdk-make-payout", Payload: payload}, &initResp); err != nil {
 		if c.cfg.Hooks != nil && c.cfg.Hooks.AfterPayout != nil {
 			c.runAfterPayoutHook(c.cfg.Hooks.AfterPayout, payload, "", "", err)
 		}
@@ -76,7 +76,7 @@ func (c *NylonPayClient) MakePayoutAndResolve(ctx context.Context, input types.M
 	}
 
 	var tx types.Transaction
-	err = c.transport.Send(ctx, core.TransportRequest{Action: "make_payout_and_resolve", Payload: payload}, &tx)
+	err = c.transport.Send(ctx, core.TransportRequest{Action: "sdk-make-payout-and-resolve", Payload: payload}, &tx)
 
 	if c.cfg.Hooks != nil && c.cfg.Hooks.AfterPayout != nil {
 		c.runAfterPayoutHook(c.cfg.Hooks.AfterPayout, payload, tx.Reference, string(tx.Status), err)

@@ -34,7 +34,7 @@ func (c *NylonPayClient) CollectPayment(ctx context.Context, input types.Collect
 		Reference string `json:"reference"`
 		Status    string `json:"status"`
 	}
-	if err := c.transport.Send(ctx, core.TransportRequest{Action: "collect_payment", Payload: payload}, &initResp); err != nil {
+	if err := c.transport.Send(ctx, core.TransportRequest{Action: "sdk-collect-payment", Payload: payload}, &initResp); err != nil {
 		if c.cfg.Hooks != nil && c.cfg.Hooks.AfterCollect != nil {
 			c.runAfterCollectHook(c.cfg.Hooks.AfterCollect, payload, "", "", err)
 		}
@@ -76,7 +76,7 @@ func (c *NylonPayClient) CollectPaymentAndResolve(ctx context.Context, input typ
 	}
 
 	var tx types.Transaction
-	err = c.transport.Send(ctx, core.TransportRequest{Action: "collect_payment_and_resolve", Payload: payload}, &tx)
+	err = c.transport.Send(ctx, core.TransportRequest{Action: "sdk-collect-payment-and-resolve", Payload: payload}, &tx)
 
 	if c.cfg.Hooks != nil && c.cfg.Hooks.AfterCollect != nil {
 		c.runAfterCollectHook(c.cfg.Hooks.AfterCollect, payload, tx.Reference, string(tx.Status), err)

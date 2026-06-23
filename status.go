@@ -17,7 +17,7 @@ func (c *NylonPayClient) GetStatus(ctx context.Context, reference string) (*type
 
 	var resp types.StatusResponse
 	payload := map[string]string{"reference": reference}
-	if err := c.transport.Send(ctx, core.TransportRequest{Action: "get_status", Payload: payload}, &resp); err != nil {
+	if err := c.transport.Send(ctx, core.TransportRequest{Action: "sdk-get-status", Payload: payload}, &resp); err != nil {
 		return nil, err
 	}
 	return &resp, nil
@@ -30,7 +30,7 @@ func (c *NylonPayClient) GetTransaction(ctx context.Context, input types.GetTran
 	}
 
 	var tx types.Transaction
-	if err := c.transport.Send(ctx, core.TransportRequest{Action: "get_transaction", Payload: input}, &tx); err != nil {
+	if err := c.transport.Send(ctx, core.TransportRequest{Action: "sdk-get-transaction", Payload: input}, &tx); err != nil {
 		return nil, err
 	}
 	return &tx, nil
@@ -44,7 +44,7 @@ func (c *NylonPayClient) VerifyPhone(ctx context.Context, phoneNumber string) (*
 
 	var resp types.PhoneVerification
 	payload := map[string]string{"phoneNumber": utils.NormalizePhone(phoneNumber)}
-	if err := c.transport.Send(ctx, core.TransportRequest{Action: "verify_phone", Payload: payload}, &resp); err != nil {
+	if err := c.transport.Send(ctx, core.TransportRequest{Action: "sdk-verify-phone", Payload: payload}, &resp); err != nil {
 		return nil, err
 	}
 	return &resp, nil
