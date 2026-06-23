@@ -1,15 +1,10 @@
 package nylonpay
 
-// Type aliases and constant re-exports from subpackages.
-// Consumers only need to import this root package.
-
 import (
 	"github.com/nile-squad/nylonpay-go/internal/core"
 	"github.com/nile-squad/nylonpay-go/types"
 )
 
-// PaymentInstance is re-exported so consumers reference nylonpay.PaymentInstance
-// without importing the internal/core package directly.
 type PaymentInstance = core.PaymentInstance
 
 type (

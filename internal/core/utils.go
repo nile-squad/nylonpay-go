@@ -84,9 +84,6 @@ func buildHttpError(body []byte, statusCode int) *SDKError {
 	}
 }
 
-// ParseError converts a raw error message string into a structured SDKError.
-// It first attempts JSON parsing, then a trailing "-- error-type: <cat>" suffix,
-// falling back to category "internal".
 func ParseError(msg string) *SDKError {
 	var parsed struct {
 		Category string `json:"category"`

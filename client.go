@@ -9,8 +9,7 @@ import (
 	"github.com/nile-squad/nylonpay-go/types"
 )
 
-// Client is the interface implemented by NylonPayClient and exposed to
-// consumers so they can substitute a mock in tests.
+// Client is the interface satisfied by NylonPayClient.
 type Client interface {
 	CollectPayment(ctx context.Context, input types.CollectPaymentPayload) (*core.PaymentInstance, error)
 	CollectPaymentAndResolve(ctx context.Context, input types.CollectPaymentPayload) (*types.Transaction, error)
@@ -23,7 +22,6 @@ type Client interface {
 	VerifyWebhookSignature(input types.VerifyWebhookInput) bool
 }
 
-// Config holds credentials and behaviour settings for a NylonPayClient.
 type Config struct {
 	APIKey          string
 	APISecret       string
@@ -36,9 +34,6 @@ type Config struct {
 	Hooks           *Hooks
 }
 
-// Hooks holds optional lifecycle callbacks that fire around SDK operations.
-// A panicking hook is recovered and, if OnError is set, notified before the
-// SDK falls back to safe defaults.
 type Hooks struct {
 	BeforeCollect func(*types.CollectPaymentPayload) *types.CollectPaymentPayload
 	AfterCollect  func(*types.CollectPaymentPayload, string, string, error)
@@ -49,16 +44,14 @@ type Hooks struct {
 	OnError func(hook string, err error)
 }
 
-// NylonPayClient is the concrete implementation of Client.
 type NylonPayClient struct {
 	cfg       Config
 	transport *core.Transport
 }
 
-// compile-time interface satisfaction check.
 var _ Client = (*NylonPayClient)(nil)
 
-// NewClient validates cfg and returns a ready-to-use NylonPayClient.
+// NewClient validates cfg and constructs a client ready to use.
 func NewClient(cfg Config) (*NylonPayClient, error) {
 	if cfg.Timeout == 0 {
 		cfg.Timeout = 30 * time.Second

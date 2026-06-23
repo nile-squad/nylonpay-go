@@ -17,8 +17,6 @@ var errorTypeSuffixRegex = regexp.MustCompile(`^(?s)(.*?)\s*--\s*error-type:\s*(
 
 var cachedFingerprint = crypto.GenerateFingerprint()
 
-// Send serialises req into a signed envelope, executes it with retries, and
-// unmarshals the verified response into out.
 func (t *Transport) Send(ctx context.Context, req TransportRequest, out any) error {
 	payloadMap, err := structToMap(req.Payload)
 	if err != nil {
@@ -61,7 +59,6 @@ func (t *Transport) Send(ctx context.Context, req TransportRequest, out any) err
 		"X-Nylon-Signature": {signature},
 	}
 
-	// attempt 0 is the initial request; 1..MaxRetries are retries.
 	for attempt := 0; attempt <= t.config.MaxRetries; attempt++ {
 		attemptCtx, cancel := context.WithTimeout(ctx, t.config.Timeout)
 

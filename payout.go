@@ -8,11 +8,8 @@ import (
 	"github.com/nile-squad/nylonpay-go/types"
 )
 
-// MakePayout initiates an asynchronous outbound disbursement and returns a
-// PaymentInstance for tracking the transfer status.
-//
-// An error is returned (and no instance created) if the initiation request
-// itself fails.
+// MakePayout initiates an outbound disbursement and returns a PaymentInstance.
+// Call instance.Wait(ctx) to block until the transfer settles.
 func (c *NylonPayClient) MakePayout(ctx context.Context, input types.MakePayoutPayload) (*core.PaymentInstance, error) {
 	ref, err := c.resolveReference(input.Reference)
 	if err != nil {
@@ -56,8 +53,7 @@ func (c *NylonPayClient) MakePayout(ctx context.Context, input types.MakePayoutP
 	}), nil
 }
 
-// MakePayoutAndResolve initiates a disbursement and blocks until it reaches a
-// terminal state, then returns the completed transaction.
+// MakePayoutAndResolve initiates a disbursement and blocks until terminal.
 func (c *NylonPayClient) MakePayoutAndResolve(ctx context.Context, input types.MakePayoutPayload) (*types.Transaction, error) {
 	ref, err := c.resolveReference(input.Reference)
 	if err != nil {

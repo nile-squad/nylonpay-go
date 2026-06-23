@@ -8,7 +8,6 @@ import (
 	"github.com/nile-squad/nylonpay-go/types"
 )
 
-// TransportConfig holds low-level HTTP connection settings.
 type TransportConfig struct {
 	APIKey     string
 	APISecret  string
@@ -18,7 +17,6 @@ type TransportConfig struct {
 	HTTPClient *http.Client
 }
 
-// PaymentInstanceConfig is the constructor input for a PaymentInstance.
 type PaymentInstanceConfig struct {
 	Reference        string
 	InitialStatus    string
@@ -29,12 +27,10 @@ type PaymentInstanceConfig struct {
 	MaxPollAttempts  int
 }
 
-// Transport is the HTTP client wrapper for communicating with the Nylon Pay API.
 type Transport struct {
 	config TransportConfig
 }
 
-// NewTransport creates a Transport with sensible defaults applied.
 func NewTransport(cfg TransportConfig) *Transport {
 	if cfg.BaseURL == "" {
 		cfg.BaseURL = BASE_URL

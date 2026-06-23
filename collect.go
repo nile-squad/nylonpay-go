@@ -8,11 +8,8 @@ import (
 	"github.com/nile-squad/nylonpay-go/types"
 )
 
-// CollectPayment initiates an asynchronous mobile-money or bank collection.
-// Returns a PaymentInstance immediately; call instance.Wait(ctx) to block
-// until the payment reaches a terminal state.
-//
-// An error is returned (and no instance created) if the initiation request
+// CollectPayment initiates a payment collection and returns a PaymentInstance.
+// Call instance.Wait(ctx) to block until the payment settles.
 func (c *NylonPayClient) CollectPayment(ctx context.Context, input types.CollectPaymentPayload) (*core.PaymentInstance, error) {
 	ref, err := c.resolveReference(input.Reference)
 	if err != nil {
@@ -56,8 +53,7 @@ func (c *NylonPayClient) CollectPayment(ctx context.Context, input types.Collect
 	}), nil
 }
 
-// CollectPaymentAndResolve initiates a collection and blocks until it reaches
-// a terminal state, then returns the completed transaction.
+// CollectPaymentAndResolve initiates a collection and blocks until terminal.
 func (c *NylonPayClient) CollectPaymentAndResolve(ctx context.Context, input types.CollectPaymentPayload) (*types.Transaction, error) {
 	ref, err := c.resolveReference(input.Reference)
 	if err != nil {

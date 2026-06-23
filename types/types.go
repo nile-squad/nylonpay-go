@@ -29,7 +29,7 @@ const (
 	TransactionTypeChargeBack TransactionType = "chargeback"
 
 	PaymentMethodBank        PaymentMethod = "bank"
-	PaymentMethodMobileMoney PaymentMethod = "mobile_money"
+	PaymentMethodMobileMoney PaymentMethod = "mobileMoney"
 
 	PaymentEventSuccess    PaymentEvent = "success"
 	PaymentEventFailed     PaymentEvent = "failed"

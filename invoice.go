@@ -8,7 +8,6 @@ import (
 	"github.com/nile-squad/nylonpay-go/types"
 )
 
-// CreateInvoice generates a hosted payment invoice and returns its URL and metadata.
 func (c *NylonPayClient) CreateInvoice(ctx context.Context, input types.CreateInvoicePayload) (*types.InvoiceResponse, error) {
 	ref, err := c.resolveReference(input.Reference)
 	if err != nil {

@@ -19,7 +19,6 @@ import (
 const DefaultNonceLength = 16
 const DefaultToleranceSeconds = 300
 
-// SignatureInput holds all fields that contribute to a request signature.
 type SignatureInput struct {
 	Fingerprint string
 	Nonce       string
@@ -28,7 +27,6 @@ type SignatureInput struct {
 	Secret      string
 }
 
-// VerifyWebhookInput holds the raw webhook data needed for signature validation.
 type VerifyWebhookInput struct {
 	Payload          []byte
 	Signature        string
@@ -36,7 +34,6 @@ type VerifyWebhookInput struct {
 	ToleranceSeconds *int
 }
 
-// GenerateNonce returns a cryptographically secure random hex string.
 func GenerateNonce() (string, error) {
 	nonceBytes := make([]byte, DefaultNonceLength)
 	if _, err := rand.Read(nonceBytes); err != nil {
@@ -45,8 +42,6 @@ func GenerateNonce() (string, error) {
 	return hex.EncodeToString(nonceBytes), nil
 }
 
-// GenerateFingerprint produces a stable, environment-derived identifier for
-// the running SDK instance.
 func GenerateFingerprint() string {
 	hostname, err := os.Hostname()
 	if err != nil {
@@ -65,7 +60,6 @@ func GenerateFingerprint() string {
 	return hex.EncodeToString(hash[:])
 }
 
-// VerifyResponseSignature checks the HMAC-SHA256 signature on an API response.
 func VerifyResponseSignature(data any, signature, secret string) (bool, error) {
 	canonicalJSON, err := createCanonicalPayload(data)
 	if err != nil {
@@ -87,8 +81,6 @@ func VerifyResponseSignature(data any, signature, secret string) (bool, error) {
 	return subtle.ConstantTimeCompare(providedBytes, expectedBytes) == 1, nil
 }
 
-// VerifyWebhookSignature validates an inbound webhook payload against its HMAC
-// signature and checks the embedded timestamp is within the tolerance window.
 func VerifyWebhookSignature(input VerifyWebhookInput) bool {
 	mac := hmac.New(sha256.New, []byte(input.Secret))
 	mac.Write(input.Payload)
@@ -125,12 +117,10 @@ func VerifyWebhookSignature(input VerifyWebhookInput) bool {
 	return age <= time.Duration(toleranceSeconds)*time.Second
 }
 
-// CreateTimeStamp returns the current Unix time in milliseconds as a string.
 func CreateTimeStamp() string {
 	return strconv.FormatInt(time.Now().UnixMilli(), 10)
 }
 
-// CreateSignature produces an HMAC-SHA256 request signature from the given input.
 func CreateSignature(input SignatureInput) (string, error) {
 	canonicalPayload, err := createCanonicalPayload(input.Payload)
 	if err != nil {

@@ -9,7 +9,6 @@ import (
 	"github.com/nile-squad/nylonpay-go/types"
 )
 
-// GetStatus returns the current status of a transaction by reference.
 func (c *NylonPayClient) GetStatus(ctx context.Context, reference string) (*types.StatusResponse, error) {
 	if strings.TrimSpace(reference) == "" {
 		return nil, &core.SDKError{Category: "validation", Message: "reference is required"}
@@ -23,7 +22,6 @@ func (c *NylonPayClient) GetStatus(ctx context.Context, reference string) (*type
 	return &resp, nil
 }
 
-// GetTransaction retrieves a full transaction record by ID or reference.
 func (c *NylonPayClient) GetTransaction(ctx context.Context, input types.GetTransactionInput) (*types.Transaction, error) {
 	if input.ID == "" && input.Reference == "" {
 		return nil, &core.SDKError{Category: "validation", Message: "id or reference is required"}
@@ -36,7 +34,6 @@ func (c *NylonPayClient) GetTransaction(ctx context.Context, input types.GetTran
 	return &tx, nil
 }
 
-// VerifyPhone checks whether a phone number is registered and returns the account holder name.
 func (c *NylonPayClient) VerifyPhone(ctx context.Context, phoneNumber string) (*types.PhoneVerification, error) {
 	if strings.TrimSpace(phoneNumber) == "" {
 		return nil, &core.SDKError{Category: "validation", Message: "phoneNumber is required"}
