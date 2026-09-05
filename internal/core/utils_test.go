@@ -51,8 +51,8 @@ func TestParseError_PlainString_FallsBackToInternal(t *testing.T) {
 
 func TestParseError_AllKnownCategories(t *testing.T) {
 	for cat := range KnownCategories {
-		t.Run(cat, func(t *testing.T) {
-			msg := "some message -- error-type: " + cat
+		t.Run(string(cat), func(t *testing.T) {
+			msg := "some message -- error-type: " + string(cat)
 			err := ParseError(msg)
 			if err.Category != cat {
 				t.Errorf("category = %q, want %q", err.Category, cat)

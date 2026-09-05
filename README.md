@@ -1,206 +1,256 @@
 # nylonpay-go
 
-Go SDK for the [Nile Squad](https://nilesquad.com) payment platform.
+Official Go SDK for the [Nylon Pay](https://nylonpay.nilesquad.com) payment platform.
+
+Collect payments, make payouts, verify phone numbers, create hosted invoices,
+look up transactions, and verify webhooks. Request signing, response
+verification, retries and status polling are handled inside the SDK.
+
+This package implements the Nylon Pay SDK specification, the cross-language
+contract every Nylon Pay SDK shares, and ships its canonical signing
+conformance vectors (V1–V7), security suite (S1–S21) and integration suite
+(I1–I19).
 
 ## Installation
 
-```sh
+```bash
 go get github.com/nile-squad/nylonpay-go
 ```
 
-Requires Go 1.21+.
+Requires Go 1.25 or later. No third-party dependencies.
 
 ## Quick start
 
 ```go
-import nylonpay "github.com/nile-squad/nylonpay-go"
-
 client, err := nylonpay.NewClient(nylonpay.Config{
-    APIKey:    "npk_...",
-    APISecret: "nps_...",
+    APIKey:    os.Getenv("NYLONPAY_API_KEY"),    // npk_...
+    APISecret: os.Getenv("NYLONPAY_API_SECRET"), // nps_...
 })
 if err != nil {
     log.Fatal(err)
 }
-```
 
-Create the client once and reuse it. It is safe for concurrent use.
-
-## Operations
-
-### Collect a payment
-
-```go
-// Block until the payment settles.
-tx, err := client.CollectPaymentAndResolve(ctx, nylonpay.CollectPaymentPayload{
-    Amount:      10000,
+tx, err := client.CollectPaymentAndResolve(ctx, nylonpay.CollectPaymentInput{
+    Amount:      10000, // smallest currency unit; minimum 500 UGX
     Currency:    nylonpay.UGX,
-    Description: "Order #8821",
+    Description: "Order #123",
     Customer: nylonpay.Customer{
         Name:        "Jane Doe",
         PhoneNumber: "0771234567",
     },
 })
-
-// Or get a handle and wait when convenient.
-instance, err := client.CollectPayment(ctx, payload)
-// ...do other work...
-tx, err = instance.Wait(ctx)
 ```
 
-Minimum amount: **500 UGX**.
+Test or live mode follows from the API key. There is no environment setting.
 
-### Make a payout
+Construction validates credentials eagerly, and caches one client per
+key + secret + base URL, so calling `NewClient` again with the same credentials
+hands back the same client. Pass `Force: true` for a fresh one.
 
-```go
-tx, err := client.MakePayoutAndResolve(ctx, nylonpay.MakePayoutPayload{
-    Amount:      50000,
-    Currency:    nylonpay.UGX,
-    Description: "Vendor settlement",
-    Customer: nylonpay.Customer{
-        Name:        "John Smith",
-        PhoneNumber: "0701234567",
-    },
-    Destination: nylonpay.Destination{
-        AccountHolderName: "John Smith",
-        AccountNumber:     "0701234567",
-    },
-})
-```
+## Operations
 
-Minimum amount: **5000 UGX**.
+| Operation | Shape | Returns |
+|---|---|---|
+| `CollectPayment` | async | `*PaymentInstance` |
+| `CollectPaymentAndResolve` | blocking | `*Transaction` |
+| `MakePayout` | async | `*PaymentInstance` |
+| `MakePayoutAndResolve` | blocking | `*Transaction` |
+| `GetStatus` | sync | `*StatusResponse` |
+| `GetTransaction` | sync | `*Transaction` |
+| `ListTransactions` | sync | `*ListTransactionsResponse` |
+| `GetTransactionsByTag` | sync | `*ListTransactionsResponse` |
+| `VerifyPhone` | sync | `*PhoneVerification` |
+| `CreateInvoice` | sync | `*InvoiceResponse` |
+| `VerifyWebhookSignature` | utility | `bool` |
 
-### Get transaction status
-
-```go
-status, err := client.GetStatus(ctx, "ref1234567890abc")
-
-tx, err := client.GetTransaction(ctx, nylonpay.GetTransactionInput{
-    Reference: "ref1234567890abc",
-})
-```
-
-### Verify a phone number
+### Tracking a payment with events
 
 ```go
-info, err := client.VerifyPhone(ctx, "0771234567")
-fmt.Println(info.CustomerName, info.Verified)
-```
-
-### Create an invoice
-
-```go
-invoice, err := client.CreateInvoice(ctx, nylonpay.CreateInvoicePayload{
-    Amount:      25000,
-    Currency:    nylonpay.UGX,
-    Description: "Invoice #44",
-})
-fmt.Println(invoice.Url)
-```
-
-Invoice creation is available in live mode only.
-
-### Verify a webhook
-
-```go
-ok := client.VerifyWebhookSignature(nylonpay.VerifyWebhookInput{
-    Payload:   string(body),
-    Signature: r.Header.Get("X-Nylon-Signature"),
-    Secret:    "your-webhook-secret",
-})
-```
-
-By default, payloads older than 5 minutes are rejected. Override with `ToleranceSeconds`.
-
-## References
-
-Supply your own reference (13–15 characters) or leave it empty for an auto-generated one:
-
-```go
-nylonpay.CollectPaymentPayload{
-    Reference: "ord20240601001",
-    // ...
+instance, err := client.CollectPayment(ctx, input)
+if err != nil {
+    return err // your input was invalid
 }
+defer instance.Close()
+
+instance.
+    On(nylonpay.PaymentEventProcessing, func(e nylonpay.EventData) {
+        log.Printf("in flight: %s", e.Reference)
+    }).
+    On(nylonpay.PaymentEventSuccess, func(e nylonpay.EventData) {
+        fulfill(e.Transaction)
+    }).
+    On(nylonpay.PaymentEventError, func(e nylonpay.EventData) {
+        log.Printf("could not start: %v (%s)", e.Err, e.Category)
+    })
+
+tx, err := instance.Wait(ctx)
 ```
 
-The same reference on a repeated request replays the original transaction (idempotency).
+Events are `processing`, `success`, `failed`, `cancelled` and `error`. Each
+fires at most once. `processing` covers `pending`, `processing` and `on_hold`
+alike — one lifecycle moment to a merchant — and always fires before a terminal
+event, even for a payment that settles between polls.
+
+Registering a handler after the call returned is safe: an event that has already
+fired is delivered to the new handler immediately.
+
+`Close` stops polling. Call it on any instance you abandon without waiting,
+otherwise it keeps polling for the life of the process.
+
+**Where failures arrive.** The error returned by `CollectPayment` and
+`MakePayout` is only ever about your input. A rejection by the server means no
+transaction was created, and it reaches you as an `error` event on the instance.
+
+### Polling behaviour
+
+By default an instance polls until the transaction settles. The interval starts
+at 2s with jitter, doubles every two minutes, and is capped at 15s. Set
+`MaxPollDuration` or `MaxPollAttempts` to bound the wait.
+
+A payment in flight for more than about three minutes is flagged `Delayed`.
+`OnDelayed: nylonpay.OnDelayedReturn` resolves with the still-pending record so
+you can rely on webhooks instead of waiting.
+
+### References and idempotency
+
+The reference is the transaction's identity and the only idempotency mechanism.
+Reusing one replays the existing transaction instead of charging again, which is
+what makes retrying a network failure safe; a fresh reference always starts a
+fresh payment.
+
+A supplied reference must be **13–15 characters**. Omit it and one is generated.
+The usual mistake is passing a 36-character UUID order id — hash or truncate it
+first.
+
+### Webhooks
+
+```go
+body, _ := io.ReadAll(r.Body)
+
+if !nylonpay.VerifyWebhookSignature(nylonpay.VerifyWebhookInput{
+    Payload:   body, // the exact bytes received
+    Signature: r.Header.Get("x-nylon-signature"),
+    Secret:    webhookSecret,
+}) {
+    http.Error(w, "invalid signature", http.StatusUnauthorized)
+    return
+}
+
+var delivery nylonpay.WebhookPayload
+json.Unmarshal(body, &delivery)
+```
+
+Pass the **raw bytes**. Parsing and re-encoding changes key order and
+whitespace, so a genuine delivery would fail its own signature.
+
+The webhook secret is a **separate credential** from the API secret. Using the
+API secret here makes every webhook fail.
+
+Verification covers authenticity *and* freshness, so a captured delivery
+replayed later is rejected. `ToleranceSeconds` defaults to 300.
+`ToleranceSeconds: 0` means zero seconds — the strictest possible setting, not
+an off switch. To opt out, pass `nylonpay.DisableFreshnessCheck`.
+
+Delivery is at-least-once, so deduplicate on `DeliveryID` or `Reference`.
 
 ## Error handling
 
-All errors are `*core.SDKError`:
+Every error is an `*SDKError` with a `Category` from a fixed taxonomy. Branch on
+the category, never on message text or an HTTP status — the backend answers 200
+for success and 400 for every failure regardless of cause.
 
 ```go
-import "github.com/nile-squad/nylonpay-go/internal/core"
-
-tx, err := client.CollectPaymentAndResolve(ctx, payload)
-if err != nil {
-    var sdkErr *core.SDKError
-    if errors.As(err, &sdkErr) {
-        fmt.Println(sdkErr.Category) // "validation", "auth", "provider", ...
-        fmt.Println(sdkErr.Message)
+var sdkErr *nylonpay.SDKError
+if errors.As(err, &sdkErr) {
+    switch sdkErr.Category {
+    case nylonpay.CategoryDuplicate:
+        // that reference belongs to another account; use a new one
+    case nylonpay.CategoryRateLimit:
+        // back off before retrying
+    case nylonpay.CategoryProvider:
+        // the payment itself failed
     }
 }
 ```
 
-| Category | Origin |
-|----------|--------|
-| `auth` | Bad API key or secret |
-| `validation` | Invalid request input |
-| `provider` | Downstream payment provider |
-| `not_found` | Reference does not exist |
-| `duplicate` | Reference belongs to another account |
-| `rate_limit` | Too many requests |
-| `limit` | Account limit reached |
-| `account` | Account configuration issue |
-| `network` | Connection failure |
-| `timeout` | Request or polling timeout |
-| `internal` | Unexpected server error |
+`auth`, `validation`, `limit`, `rate_limit`, `account`, `provider`, `duplicate`,
+`not_found`, `internal`, `network`, `timeout`.
 
 ## Hooks
 
-Hooks run around collection and payout operations. A panicking hook is recovered silently; set `OnError` to be notified.
+Hooks observe or enrich payment calls. Each wraps a handler with a required
+`OnError`, so a bug in your hook can neither crash a payment nor be swallowed.
 
 ```go
 client, _ := nylonpay.NewClient(nylonpay.Config{
-    APIKey:    "npk_...",
-    APISecret: "nps_...",
+    APIKey:    key,
+    APISecret: secret,
     Hooks: &nylonpay.Hooks{
-        BeforeCollect: func(p *nylonpay.CollectPaymentPayload) *nylonpay.CollectPaymentPayload {
-            p.Description = strings.TrimSpace(p.Description)
-            return p
+        BeforeCollect: &nylonpay.Hook[func(nylonpay.CollectPaymentInput) *nylonpay.CollectPaymentInput]{
+            Fn: func(in nylonpay.CollectPaymentInput) *nylonpay.CollectPaymentInput {
+                in.Metadata["tenant"] = currentTenant()
+                return &in // return nil to leave the input unchanged
+            },
+            OnError: func(err error) { log.Printf("hook failed: %v", err) },
         },
-        AfterCollect: func(p *nylonpay.CollectPaymentPayload, ref, status string, err error) {
-            log.Printf("collect ref=%s status=%s err=%v", ref, status, err)
-        },
-        OnError: func(hook string, err error) {
-            log.Printf("hook %s panicked: %v", hook, err)
+        AfterCollect: &nylonpay.Hook[func(nylonpay.HookResult, nylonpay.AfterHookInput[nylonpay.CollectPaymentInput])]{
+            Fn: func(res nylonpay.HookResult, in nylonpay.AfterHookInput[nylonpay.CollectPaymentInput]) {
+                // in.Input is the final wire payload; in.Raw is what you passed
+                audit(res.Reference, res.Status, res.Err)
+            },
+            OnError: func(err error) { log.Printf("hook failed: %v", err) },
         },
     },
 })
 ```
 
+A `before*` hook's output is re-run through the full validation and
+normalization suite, so it cannot smuggle a bad reference or a sub-minimum
+amount past the checks. An `after*` hook runs whether the call succeeded or not.
+Set `Enabled` to `false` to switch one off without removing it.
+
 ## Configuration
 
-| Field | Default | Description |
-|-------|---------|-------------|
-| `APIKey` | — | Required. Must start with `npk_`. |
-| `APISecret` | — | Required. Must start with `nps_`. |
-| `BaseURL` | `https://api.nylonpay.nilesquad.com/api/services` | Override for testing. |
-| `Timeout` | `30s` | Per-request timeout. |
-| `MaxRetries` | `3` | Retries on transient errors (5xx, 408, 429). |
-| `MaxPollInterval` | `2s` | Interval between status polls. |
-| `MaxPollDuration` | `5m` | Hard ceiling on total poll time. |
-| `MaxPollAttempts` | `150` | Maximum number of poll attempts. |
+| Field | Default | Notes |
+|---|---|---|
+| `APIKey` | — | required, `npk_` prefix |
+| `APISecret` | — | required, `nps_` prefix |
+| `BaseURL` | production endpoint | complete URL including path |
+| `Timeout` | `30s` | per HTTP attempt |
+| `MaxRetries` | `3` | pass a negative value to disable |
+| `MaxPollInterval` | `2s` | base poll interval, not a ceiling |
+| `MaxPollDuration` | none | zero polls until terminal |
+| `MaxPollAttempts` | none | zero polls until terminal |
+| `OnDelayed` | `wait` | or `return` |
+| `HTTPClient` | `http.Client` | substitute your own |
+| `MaxResponseBytes` | `10 MB` | response body cap |
+| `Force` | `false` | bypass the client cache |
+| `Hooks` | none | see above |
+
+Retries cover 408, 429, 500, 502, 503, 504 and network failures, with
+exponential backoff. Other 4xx responses are returned immediately. Every attempt
+is signed fresh while the body — and therefore the reference — stays constant,
+so a retry replays rather than double-charges.
 
 ## Testing
 
-```sh
-# Unit tests
-go test ./...
-
-# Integration tests (requires sandbox credentials)
-NYLONPAY_API_KEY=npk_... \
-NYLONPAY_API_SECRET=nps_... \
-NYLONPAY_TEST_PHONE=07... \
-  go test ./tests/integration/ -tags integration -v
+```bash
+go test ./...                              # unit + security suites
+go test -race ./...                        # with the race detector
+go test -tags=integration ./tests/integration/   # needs sandbox credentials
 ```
+
+The signing conformance vectors are the gate. If they fail, every live request
+will fail with an opaque `auth` error:
+
+```bash
+go test -run 'S19' ./internal/crypto/
+```
+
+Integration tests read `NYLONPAY_API_KEY`, `NYLONPAY_API_SECRET`,
+`NYLONPAY_TEST_PHONE`, `NYLONPAY_BASE_URL` and `NYLONPAY_TEST_MODE` (see
+`tests/integration/.env.example`) and skip cleanly when credentials are absent.
+
+## License
+
+See [LICENSE](./LICENSE).

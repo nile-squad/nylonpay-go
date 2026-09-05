@@ -284,9 +284,14 @@ func TestVerifyWebhookSignature_ExpiredTimestamp(t *testing.T) {
 	}
 }
 
-func TestVerifyWebhookSignature_ZeroTolerance_SkipsTimestampCheck(t *testing.T) {
+// S18: a tolerance of 0 is the strictest possible setting, not an off switch.
+//
+// This replaces an earlier test that asserted the opposite. The old behaviour
+// was fail-open: a developer hardening a handler reaches for 0 meaning "zero
+// tolerance" and silently got no replay protection at all, permanently, with
+// verification still returning true so nothing looked wrong.
+func TestVerifyWebhookSignature_ZeroTolerance_IsStrictNotDisabled(t *testing.T) {
 	secret := "wh_secret"
-	// Very old timestamp — but tolerance = 0 disables freshness check.
 	old := int64(1000000000)
 	payload := fmt.Appendf(nil, `{"event":"success","timestamp":%d}`, old)
 	sig := signWebhook(payload, secret)
@@ -298,8 +303,46 @@ func TestVerifyWebhookSignature_ZeroTolerance_SkipsTimestampCheck(t *testing.T) 
 		Secret:           secret,
 		ToleranceSeconds: &zero,
 	})
+	if ok {
+		t.Error("tolerance 0 must reject a stale webhook, not skip the freshness check")
+	}
+}
+
+// S18: only the explicit sentinel opts out.
+func TestVerifyWebhookSignature_DisableSentinel_AcceptsStale(t *testing.T) {
+	secret := "wh_secret"
+	old := int64(1000000000)
+	payload := fmt.Appendf(nil, `{"event":"success","timestamp":%d}`, old)
+	sig := signWebhook(payload, secret)
+	disabled := DisableFreshnessCheck
+
+	ok := VerifyWebhookSignature(VerifyWebhookInput{
+		Payload:          payload,
+		Signature:        sig,
+		Secret:           secret,
+		ToleranceSeconds: &disabled,
+	})
 	if !ok {
-		t.Error("zero tolerance should skip the timestamp check")
+		t.Error("DisableFreshnessCheck must accept a stale but correctly signed webhook")
+	}
+}
+
+// A negative value that is not the sentinel is meaningless, so it fails closed
+// rather than being rounded toward either behaviour.
+func TestVerifyWebhookSignature_OtherNegativeTolerance_Rejects(t *testing.T) {
+	secret := "wh_secret"
+	payload := freshWebhookPayload()
+	sig := signWebhook(payload, secret)
+	bogus := -42
+
+	ok := VerifyWebhookSignature(VerifyWebhookInput{
+		Payload:          payload,
+		Signature:        sig,
+		Secret:           secret,
+		ToleranceSeconds: &bogus,
+	})
+	if ok {
+		t.Error("a negative tolerance other than the sentinel must be rejected")
 	}
 }
 

@@ -6,17 +6,18 @@ import (
 	"time"
 
 	nylonpay "github.com/nile-squad/nylonpay-go"
-	"github.com/nile-squad/nylonpay-go/internal/core"
 )
 
-func assertSDKError(t *testing.T, err error, wantCategory string) {
+func assertSDKError(t *testing.T, err error, wantCategory nylonpay.ErrorCategory) {
 	t.Helper()
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
-	var sdkErr *core.SDKError
+	// Recovered through the public alias, exactly as a merchant would: the
+	// concrete type must be reachable from outside the module.
+	var sdkErr *nylonpay.SDKError
 	if !errors.As(err, &sdkErr) {
-		t.Fatalf("expected *core.SDKError, got %T: %v", err, err)
+		t.Fatalf("expected *nylonpay.SDKError, got %T: %v", err, err)
 	}
 	if sdkErr.Category != wantCategory {
 		t.Errorf("category = %q, want %q (message: %s)", sdkErr.Category, wantCategory, sdkErr.Message)

@@ -1,47 +1,64 @@
 package nylonpay
 
 import (
-	"context"
 	"crypto/rand"
 	"encoding/hex"
-	"fmt"
+	"unicode/utf8"
 
-	"github.com/nile-squad/nylonpay-go/internal/core"
 	"github.com/nile-squad/nylonpay-go/types"
 )
 
+// A reference is echoed verbatim to the provider as its merchantTransactionId,
+// which is bounded to this range. Anything outside it is rejected.
 const (
 	referenceMinLength = 13
 	referenceMaxLength = 15
 )
 
-func (c *NylonPayClient) resolveReference(ref string) (string, error) {
-	if ref == "" {
-		return generateReference(), nil
+// validateReferenceLength enforces the 13-15 character bound synchronously, so
+// an out-of-range reference never costs a network round-trip.
+//
+// Length is counted in characters, not bytes, so every Nylon Pay SDK accepts
+// exactly the same set of reference strings regardless of encoding.
+//
+// The usual way to trip this is passing a 36-character UUID order id. Hash or
+// truncate it to 15 characters or fewer first.
+func validateReferenceLength(reference string) error {
+	length := utf8.RuneCountInString(reference)
+	if length < referenceMinLength || length > referenceMaxLength {
+		return validationErr("reference must be %d-%d characters", referenceMinLength, referenceMaxLength)
 	}
-	if len(ref) < referenceMinLength || len(ref) > referenceMaxLength {
-		return "", &core.SDKError{
-			Category: "validation",
-			Message:  fmt.Sprintf("reference must be %d–%d characters", referenceMinLength, referenceMaxLength),
-		}
-	}
-	return ref, nil
+	return nil
 }
 
-func generateReference() string {
-	b := make([]byte, 16)
-	_, _ = rand.Read(b)
-	return hex.EncodeToString(b)[:referenceMaxLength]
-}
-
-func (c *NylonPayClient) rawFetchStatus(ctx context.Context, ref string) (string, error) {
-	resp, err := c.GetStatus(ctx, ref)
-	if err != nil {
+// resolveReference returns the reference to use for a create operation,
+// generating one when the merchant supplied none.
+//
+// The reference is the transaction identity and the only idempotency
+// mechanism: reusing one replays the existing transaction instead of charging
+// again, and a retry after a network failure must reuse it for that reason.
+func resolveReference(reference string) (string, error) {
+	if reference == "" {
+		return generateReference()
+	}
+	if err := validateReferenceLength(reference); err != nil {
 		return "", err
 	}
-	return string(resp.Status), nil
+	return reference, nil
 }
 
-func (c *NylonPayClient) rawFetchTransaction(ctx context.Context, ref string) (*types.Transaction, error) {
-	return c.GetTransaction(ctx, types.GetTransactionInput{Reference: ref})
+// generateReference produces a 15-character reference from a cryptographic
+// source, so references are unique across rapid sequential calls.
+func generateReference() (string, error) {
+	buf := make([]byte, 8)
+	if _, err := rand.Read(buf); err != nil {
+		// Never silently fall back to a predictable value: a fixed reference
+		// would collide with every other call and replay someone else's
+		// transaction.
+		return "", &types.SDKError{
+			Category: types.CategoryInternal,
+			Message:  "Could not generate a transaction reference",
+		}
+	}
+	return hex.EncodeToString(buf)[:referenceMaxLength], nil
 }

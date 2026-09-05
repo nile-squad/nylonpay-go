@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"math/rand"
 	"time"
+
+	"github.com/nile-squad/nylonpay-go/types"
 )
 
 func structToMap(in any) (map[string]any, error) {
@@ -86,8 +88,8 @@ func buildHttpError(body []byte, statusCode int) *SDKError {
 
 func ParseError(msg string) *SDKError {
 	var parsed struct {
-		Category string `json:"category"`
-		Message  string `json:"message"`
+		Category types.ErrorCategory `json:"category"`
+		Message  string              `json:"message"`
 	}
 	if err := json.Unmarshal([]byte(msg), &parsed); err == nil && parsed.Category != "" {
 		return &SDKError{Category: parsed.Category, Message: parsed.Message}
@@ -95,11 +97,43 @@ func ParseError(msg string) *SDKError {
 
 	matches := errorTypeSuffixRegex.FindStringSubmatch(msg)
 	if len(matches) == 3 {
-		cat := matches[2]
+		cat := types.ErrorCategory(matches[2])
 		if KnownCategories[cat] {
 			return &SDKError{Category: cat, Message: matches[1]}
 		}
 	}
 
 	return &SDKError{Category: "internal", Message: msg}
+}
+
+// stripRequestNonce removes the backend's echoed request nonce from a verified
+// payload and returns it alongside the remaining data.
+//
+// The nonce is covered by the response signature, so once the HMAC verifies it
+// is as trustworthy as the signature itself. Comparing it against the nonce
+// just sent is what makes a response answer *this* request. It is stripped
+// before anything reaches the merchant, since it is transport bookkeeping.
+//
+// The third return value reports whether a usable nonce was present at all. A
+// missing field is a rejection, not a pass: a lenient "check it only when
+// present" would accept exactly the pre-binding responses an attacker is most
+// likely to be holding.
+func stripRequestNonce(data any) (any, string, bool) {
+	payload, ok := data.(map[string]any)
+	if !ok {
+		return data, "", false
+	}
+
+	raw, exists := payload["_requestNonce"]
+	if !exists {
+		return data, "", false
+	}
+
+	nonce, ok := raw.(string)
+	if !ok {
+		return data, "", false
+	}
+
+	delete(payload, "_requestNonce")
+	return payload, nonce, true
 }

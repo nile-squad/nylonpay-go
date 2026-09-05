@@ -18,7 +18,7 @@ func TestCollectPayment_AutoGeneratesReference(t *testing.T) {
 
 	// Trigger validation pass, which means reference was valid.
 	// (The call will fail at network, but ref validation already passed.)
-	_, err := c.CollectPayment(context.Background(), nylonpay.CollectPaymentPayload{
+	_, err := c.CollectPayment(context.Background(), nylonpay.CollectPaymentInput{
 		Amount:      1000,
 		Customer:    nylonpay.Customer{Name: "Jane", PhoneNumber: "0771234567"},
 		Description: "auto ref test",
@@ -36,7 +36,7 @@ func TestCollectPayment_AutoGeneratesReference(t *testing.T) {
 
 func TestCollectPayment_RejectsReferenceTooShort(t *testing.T) {
 	ref := strings.Repeat("a", 12) // 12 < 13
-	_, err := testClient(t).CollectPayment(context.Background(), nylonpay.CollectPaymentPayload{
+	_, err := testClient(t).CollectPayment(context.Background(), nylonpay.CollectPaymentInput{
 		Amount:      1000,
 		Customer:    nylonpay.Customer{Name: "Jane", PhoneNumber: "0771234567"},
 		Description: "test",
@@ -47,7 +47,7 @@ func TestCollectPayment_RejectsReferenceTooShort(t *testing.T) {
 
 func TestCollectPayment_RejectsReferenceTooLong(t *testing.T) {
 	ref := strings.Repeat("a", 16) // 16 > 15
-	_, err := testClient(t).CollectPayment(context.Background(), nylonpay.CollectPaymentPayload{
+	_, err := testClient(t).CollectPayment(context.Background(), nylonpay.CollectPaymentInput{
 		Amount:      1000,
 		Customer:    nylonpay.Customer{Name: "Jane", PhoneNumber: "0771234567"},
 		Description: "test",
@@ -58,7 +58,7 @@ func TestCollectPayment_RejectsReferenceTooLong(t *testing.T) {
 
 func TestCollectPayment_AcceptsMinLengthReference(t *testing.T) {
 	ref := strings.Repeat("a", 13) // exactly 13
-	_, err := testClient(t).CollectPayment(context.Background(), nylonpay.CollectPaymentPayload{
+	_, err := testClient(t).CollectPayment(context.Background(), nylonpay.CollectPaymentInput{
 		Amount:      1000,
 		Customer:    nylonpay.Customer{Name: "Jane", PhoneNumber: "0771234567"},
 		Description: "test",
@@ -72,7 +72,7 @@ func TestCollectPayment_AcceptsMinLengthReference(t *testing.T) {
 
 func TestCollectPayment_AcceptsMaxLengthReference(t *testing.T) {
 	ref := strings.Repeat("a", 15) // exactly 15
-	_, err := testClient(t).CollectPayment(context.Background(), nylonpay.CollectPaymentPayload{
+	_, err := testClient(t).CollectPayment(context.Background(), nylonpay.CollectPaymentInput{
 		Amount:      1000,
 		Customer:    nylonpay.Customer{Name: "Jane", PhoneNumber: "0771234567"},
 		Description: "test",
