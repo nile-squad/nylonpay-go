@@ -4,82 +4,78 @@ import (
 	"context"
 
 	"github.com/nile-squad/nylonpay-go/internal/core"
-	"github.com/nile-squad/nylonpay-go/internal/utils"
 	"github.com/nile-squad/nylonpay-go/types"
 )
 
-// MakePayout initiates an outbound disbursement and returns a PaymentInstance.
-// Call instance.Wait(ctx) to block until the transfer settles.
-func (c *NylonPayClient) MakePayout(ctx context.Context, input types.MakePayoutPayload) (*core.PaymentInstance, error) {
-	ref, err := c.resolveReference(input.Reference)
+// MakePayout initiates a disbursement and returns a PaymentInstance that tracks
+// it to a terminal state.
+//
+// Payouts use the same async primitive as collections, so the handling is
+// identical. One difference in practice: a payout may sit in "on_hold" while it
+// is reviewed, which is reported as a "processing" event and keeps polling.
+//
+// As with CollectPayment, the returned error covers only client-side
+// validation; a server-side rejection arrives as an "error" event on the
+// instance.
+func (c *NylonPayClient) MakePayout(ctx context.Context, input types.MakePayoutInput) (*core.PaymentInstance, error) {
+	prepared, err := c.preparePayoutWithHook(input)
 	if err != nil {
 		return nil, err
 	}
-	input.Reference = ref
 
-	if err := c.validatePayout(input); err != nil {
-		return nil, err
+	var initiated struct {
+		Reference string                  `json:"reference"`
+		Status    types.TransactionStatus `json:"status"`
 	}
-	input.Customer.PhoneNumber = utils.NormalizePhone(input.Customer.PhoneNumber)
+	sendErr := c.transport.Send(ctx, core.TransportRequest{
+		Action:  core.ActionMakePayout,
+		Payload: prepared,
+	}, &initiated)
 
-	payload := &input
-	if c.cfg.Hooks != nil && c.cfg.Hooks.BeforePayout != nil {
-		payload = c.runBeforePayoutHook(c.cfg.Hooks.BeforePayout, payload)
-	}
+	c.runAfterPayout(hookResult(prepared.Reference, initiated.Reference, initiated.Status, sendErr), prepared, input)
 
-	var initResp struct {
-		Reference string `json:"reference"`
-		Status    string `json:"status"`
+	if sendErr != nil {
+		return c.newInstance(ctx, prepared.Reference, "", sendErr), nil
 	}
-	if err := c.transport.Send(ctx, core.TransportRequest{Action: "sdk-make-payout", Payload: payload}, &initResp); err != nil {
-		if c.cfg.Hooks != nil && c.cfg.Hooks.AfterPayout != nil {
-			c.runAfterPayoutHook(c.cfg.Hooks.AfterPayout, payload, "", "", err)
-		}
-		return nil, err
-	}
-
-	if c.cfg.Hooks != nil && c.cfg.Hooks.AfterPayout != nil {
-		c.runAfterPayoutHook(c.cfg.Hooks.AfterPayout, payload, initResp.Reference, initResp.Status, nil)
-	}
-
-	return core.NewPaymentInstance(core.PaymentInstanceConfig{
-		Reference:        input.Reference,
-		InitialStatus:    initResp.Status,
-		FetchStatus:      c.rawFetchStatus,
-		FetchTransaction: c.rawFetchTransaction,
-		PollInterval:     c.cfg.MaxPollInterval,
-		MaxPollDuration:  c.cfg.MaxPollDuration,
-		MaxPollAttempts:  c.cfg.MaxPollAttempts,
-	}), nil
+	return c.newInstance(ctx, initiated.Reference, initiated.Status, nil), nil
 }
 
-// MakePayoutAndResolve initiates a disbursement and blocks until terminal.
-func (c *NylonPayClient) MakePayoutAndResolve(ctx context.Context, input types.MakePayoutPayload) (*types.Transaction, error) {
-	ref, err := c.resolveReference(input.Reference)
+// MakePayoutAndResolve initiates a disbursement and blocks until it reaches a
+// terminal state.
+//
+// Webhooks remain the authoritative record for payout completion: providers can
+// settle well after the SDK stops waiting.
+func (c *NylonPayClient) MakePayoutAndResolve(ctx context.Context, input types.MakePayoutInput) (*types.Transaction, error) {
+	prepared, err := c.preparePayoutWithHook(input)
 	if err != nil {
 		return nil, err
 	}
-	input.Reference = ref
 
-	if err := c.validatePayout(input); err != nil {
-		return nil, err
+	var transaction types.Transaction
+	sendErr := c.transport.Send(ctx, core.TransportRequest{
+		Action:  core.ActionMakePayoutAndResolve,
+		Payload: prepared,
+	}, &transaction)
+
+	c.runAfterPayout(hookResult(prepared.Reference, transaction.Reference, transaction.Status, sendErr), prepared, input)
+
+	if sendErr != nil {
+		return nil, sendErr
 	}
-	input.Customer.PhoneNumber = utils.NormalizePhone(input.Customer.PhoneNumber)
+	return c.continueResolveIfNeeded(ctx, &transaction)
+}
 
-	payload := &input
-	if c.cfg.Hooks != nil && c.cfg.Hooks.BeforePayout != nil {
-		payload = c.runBeforePayoutHook(c.cfg.Hooks.BeforePayout, payload)
-	}
-
-	var tx types.Transaction
-	err = c.transport.Send(ctx, core.TransportRequest{Action: "sdk-make-payout-and-resolve", Payload: payload}, &tx)
-
-	if c.cfg.Hooks != nil && c.cfg.Hooks.AfterPayout != nil {
-		c.runAfterPayoutHook(c.cfg.Hooks.AfterPayout, payload, tx.Reference, string(tx.Status), err)
-	}
-
+// preparePayoutWithHook validates, applies the beforePayout hook, then
+// validates again. See prepareCollectWithHook for why the second pass matters.
+func (c *NylonPayClient) preparePayoutWithHook(input types.MakePayoutInput) (types.MakePayoutInput, error) {
+	prepared, err := c.preparePayout(input)
 	if err != nil {
-		return nil, err
+		return prepared, err
 	}
-	return &tx, nil
+
+	mutated := c.runBeforePayout(prepared)
+	if mutated.Reference == "" {
+		mutated.Reference = prepared.Reference
+	}
+	return c.preparePayout(mutated)
 }

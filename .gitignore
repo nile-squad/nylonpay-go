@@ -1,0 +1,13 @@
+# Credentials — never commit
+.env
+.env.*
+!.env.example
+
+# Go build output
+*.exe
+*.test
+*.out
+coverage.out
+vendor/
+
+.DS_Store

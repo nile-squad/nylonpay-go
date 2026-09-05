@@ -2,9 +2,10 @@ package core
 
 import (
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"time"
+
+	"github.com/nile-squad/nylonpay-go/types"
 )
 
 const (
@@ -13,28 +14,29 @@ const (
 	MAX_RETRIES         = 3
 	SDKService          = "sdk"
 	DefaultPollInterval = 2 * time.Second
-	DefaultPollDuration = 5 * time.Minute
-	DefaultPollAttempts = 150
-	PollJitter          = 500 * time.Millisecond
+	PollJitter          = 250 * time.Millisecond
+
+	// MaxResponseBytes bounds how much of a response body is read before the
+	// transport gives up. Response bodies are signed in full for verification,
+	// so without a bound an oversized reply could exhaust memory during the
+	// read, before verification ever runs.
+	MaxResponseBytes int64 = 10 * 1024 * 1024
 )
 
-var KnownCategories = map[string]bool{
-	"auth":       true,
-	"validation": true,
-	"limit":      true,
-	"rate_limit": true,
-	"account":    true,
-	"provider":   true,
-	"duplicate":  true,
-	"not_found":  true,
-	"internal":   true,
-	"network":    true,
-	"timeout":    true,
-}
+// SDKError is the structured error every operation returns. It is an alias for
+// the public types.SDKError so that consumers, who cannot import this internal
+// package, can still recover it with errors.As.
+type SDKError = types.SDKError
 
-var StatusCategory = map[int]string{
-	http.StatusRequestTimeout:  "timeout",
-	http.StatusTooManyRequests: "rate_limit",
+// KnownCategories is re-exported for convenience within the module.
+var KnownCategories = types.KnownCategories
+
+// StatusCategory maps the few HTTP statuses that carry meaning on their own.
+// It is a fallback only: the backend tags the category onto the message, and
+// that tag always wins. The SDK never classifies a tagged error by status.
+var StatusCategory = map[int]types.ErrorCategory{
+	http.StatusRequestTimeout:  types.CategoryTimeout,
+	http.StatusTooManyRequests: types.CategoryRateLimit,
 }
 
 var RetryableStatusCodes = map[int]bool{
@@ -46,21 +48,12 @@ var RetryableStatusCodes = map[int]bool{
 	http.StatusGatewayTimeout:      true,
 }
 
+// terminalStates are the statuses that stop polling. "on_hold" is deliberately
+// absent: a payout parked for review is still in flight.
 var terminalStates = map[string]bool{
 	"successful": true,
 	"failed":     true,
 	"cancelled":  true,
-}
-
-// SDKError is the structured error type returned by all SDK operations.
-type SDKError struct {
-	Category  string `json:"category"`
-	Message   string `json:"message"`
-	Retryable bool   `json:"retryable"`
-}
-
-func (e *SDKError) Error() string {
-	return fmt.Sprintf("[%s] %s", e.Category, e.Message)
 }
 
 // TransportRequest is the input envelope for a single SDK action.
@@ -81,3 +74,17 @@ type BackendResponse struct {
 	Message string          `json:"message"`
 	Data    json.RawMessage `json:"data"`
 }
+
+// Backend action names. Every operation POSTs to the same endpoint; the action
+// in the envelope is what selects it.
+const (
+	ActionCollectPayment           = "sdk-collect-payment"
+	ActionCollectPaymentAndResolve = "sdk-collect-payment-and-resolve"
+	ActionMakePayout               = "sdk-make-payout"
+	ActionMakePayoutAndResolve     = "sdk-make-payout-and-resolve"
+	ActionGetStatus                = "sdk-get-status"
+	ActionGetTransaction           = "sdk-get-transaction"
+	ActionListTransactions         = "sdk-list-transactions"
+	ActionVerifyPhone              = "sdk-verify-phone"
+	ActionCreateInvoice            = "sdk-create-invoice"
+)

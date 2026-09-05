@@ -11,8 +11,11 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
+
+	"github.com/nile-squad/nylonpay-go/types"
 )
 
 // signResponseData computes the _responseSignature the mock server must embed.
@@ -28,8 +31,12 @@ func signResponseData(data map[string]any, secret string) string {
 	return hex.EncodeToString(mac.Sum(nil))
 }
 
-// successBody wraps data in a signed BackendResponse envelope.
-func successBody(data map[string]any, secret string) []byte {
+// successBody wraps data in a signed BackendResponse envelope, echoing the
+// request nonce inside the signed payload the way the real backend does. That
+// echo is what binds the response to the request that asked for it; without it
+// the transport rejects the response as unverifiable.
+func successBody(data map[string]any, secret, requestNonce string) []byte {
+	data["_requestNonce"] = requestNonce
 	sig := signResponseData(data, secret)
 	data["_responseSignature"] = sig
 	dataBytes, _ := json.Marshal(data)
@@ -69,7 +76,7 @@ func TestSend_HappyPath(t *testing.T) {
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		w.Write(successBody(map[string]any{"reference": "ref123", "status": "pending"}, secret))
+		w.Write(successBody(map[string]any{"reference": "ref123", "status": "pending"}, secret, r.Header.Get("X-Nylon-Nonce")))
 	}))
 	defer srv.Close()
 
@@ -95,7 +102,7 @@ func TestSend_SetsRequiredHeaders(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotHeaders = r.Header.Clone()
 		w.Header().Set("Content-Type", "application/json")
-		w.Write(successBody(map[string]any{}, secret))
+		w.Write(successBody(map[string]any{}, secret, r.Header.Get("X-Nylon-Nonce")))
 	}))
 	defer srv.Close()
 
@@ -123,7 +130,7 @@ func TestSend_EnvelopeHasCorrectShape(t *testing.T) {
 		body, _ := io.ReadAll(r.Body)
 		json.Unmarshal(body, &gotEnvelope)
 		w.Header().Set("Content-Type", "application/json")
-		w.Write(successBody(map[string]any{}, secret))
+		w.Write(successBody(map[string]any{}, secret, r.Header.Get("X-Nylon-Nonce")))
 	}))
 	defer srv.Close()
 
@@ -236,7 +243,7 @@ func TestSend_RetriesOnTransientError(t *testing.T) {
 			w.Write([]byte(`{"status":false,"message":"unavailable","data":null}`))
 			return
 		}
-		w.Write(successBody(map[string]any{"ok": true}, secret))
+		w.Write(successBody(map[string]any{"ok": true}, secret, r.Header.Get("X-Nylon-Nonce")))
 	}))
 	defer srv.Close()
 
@@ -329,7 +336,7 @@ func TestSend_EmbedsFingerprintInPayload(t *testing.T) {
 			gotPayload = payloadMap
 		}
 		w.Header().Set("Content-Type", "application/json")
-		w.Write(successBody(map[string]any{}, secret))
+		w.Write(successBody(map[string]any{}, secret, r.Header.Get("X-Nylon-Nonce")))
 	}))
 	defer srv.Close()
 
@@ -345,4 +352,192 @@ func TestSend_EmbedsFingerprintInPayload(t *testing.T) {
 	if fp, _ := gotPayload["_fingerprint"].(string); !strings.HasPrefix(fp, "") || len(fp) != 64 {
 		t.Errorf("_fingerprint = %q; expected a 64-char hex string (SHA-256)", fp)
 	}
+}
+
+// ── Malformed and unexpected responses ────────────────────────────────────────
+
+func TestSend_NonJSONBodyIsRejected(t *testing.T) {
+	const secret = "nps_secret"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Write([]byte("<html>502 Bad Gateway</html>"))
+	}))
+	defer srv.Close()
+
+	var out map[string]any
+	err := testTransport(srv, secret).Send(context.Background(),
+		TransportRequest{Action: ActionGetStatus, Payload: map[string]string{"reference": "ref"}}, &out)
+
+	assertSDKErrorCategory(t, err, types.CategoryInternal)
+}
+
+func TestSend_EmptyBodyIsRejected(t *testing.T) {
+	const secret = "nps_secret"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	var out map[string]any
+	err := testTransport(srv, secret).Send(context.Background(),
+		TransportRequest{Action: ActionGetStatus, Payload: map[string]string{"reference": "ref"}}, &out)
+
+	assertSDKErrorCategory(t, err, types.CategoryInternal)
+}
+
+// The backend tags the category onto the message, which is the only channel
+// that survives its 200/400-only responses. That tag always wins over status.
+func TestSend_TaggedMessageWinsOverHTTPStatus(t *testing.T) {
+	const secret = "nps_secret"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write(errorBody("API key was not found -- error-type: auth"))
+	}))
+	defer srv.Close()
+
+	var out map[string]any
+	err := testTransport(srv, secret).Send(context.Background(),
+		TransportRequest{Action: ActionGetStatus, Payload: map[string]string{"reference": "ref"}}, &out)
+
+	sdkErr := assertSDKErrorCategory(t, err, types.CategoryAuth)
+	if sdkErr.Message != "API key was not found" {
+		t.Errorf("message = %q, want the human portion without the tag", sdkErr.Message)
+	}
+}
+
+func TestSend_UnauthorizedAndUnprocessableAreNotRetried(t *testing.T) {
+	for _, status := range []int{http.StatusUnauthorized, http.StatusUnprocessableEntity} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			const secret = "nps_secret"
+			var mu sync.Mutex
+			attempts := 0
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				mu.Lock()
+				attempts++
+				mu.Unlock()
+				w.WriteHeader(status)
+				w.Write(errorBody("rejected"))
+			}))
+			defer srv.Close()
+
+			transport := NewTransport(TransportConfig{
+				APIKey: "npk_test", APISecret: secret, BaseURL: srv.URL,
+				Timeout: 5 * time.Second, MaxRetries: 3,
+			})
+
+			var out map[string]any
+			if err := transport.Send(context.Background(),
+				TransportRequest{Action: ActionGetStatus, Payload: map[string]string{"reference": "ref"}}, &out); err == nil {
+				t.Fatal("expected an error")
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			if attempts != 1 {
+				t.Errorf("attempts = %d, want 1: client errors are returned immediately", attempts)
+			}
+		})
+	}
+}
+
+// Each attempt carries a fresh nonce, timestamp and signature over a body that
+// never changes. Reusing them would be rejected by the backend as a replay.
+func TestSend_EachRetryIsSignedFresh(t *testing.T) {
+	const secret = "nps_secret"
+	var mu sync.Mutex
+	var nonces, signatures, bodies []string
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+
+		mu.Lock()
+		nonces = append(nonces, r.Header.Get("X-Nylon-Nonce"))
+		signatures = append(signatures, r.Header.Get("X-Nylon-Signature"))
+		bodies = append(bodies, string(body))
+		seen := len(nonces)
+		mu.Unlock()
+
+		if seen < 3 {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		w.Write(successBody(map[string]any{"ok": true}, secret, r.Header.Get("X-Nylon-Nonce")))
+	}))
+	defer srv.Close()
+
+	transport := NewTransport(TransportConfig{
+		APIKey: "npk_test", APISecret: secret, BaseURL: srv.URL,
+		Timeout: 5 * time.Second, MaxRetries: 3,
+	})
+
+	var out map[string]any
+	if err := transport.Send(context.Background(),
+		TransportRequest{Action: ActionGetStatus, Payload: map[string]string{"reference": "ref"}}, &out); err != nil {
+		t.Fatalf("expected success after retries: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(nonces) != 3 {
+		t.Fatalf("attempts = %d, want 3", len(nonces))
+	}
+	for i := 1; i < len(nonces); i++ {
+		if nonces[i] == nonces[0] {
+			t.Error("every attempt must carry a distinct nonce")
+		}
+		if signatures[i] == signatures[0] {
+			t.Error("every attempt must be signed afresh")
+		}
+		if bodies[i] != bodies[0] {
+			t.Error("the body, and therefore the reference, must not change between attempts")
+		}
+	}
+}
+
+func TestSend_CancelledContextIsNotRetried(t *testing.T) {
+	const secret = "nps_secret"
+	var mu sync.Mutex
+	attempts := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		mu.Lock()
+		attempts++
+		mu.Unlock()
+		time.Sleep(50 * time.Millisecond)
+	}))
+	defer srv.Close()
+
+	transport := NewTransport(TransportConfig{
+		APIKey: "npk_test", APISecret: secret, BaseURL: srv.URL,
+		Timeout: 5 * time.Second, MaxRetries: 3,
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(10 * time.Millisecond)
+		cancel()
+	}()
+
+	var out map[string]any
+	if err := transport.Send(ctx,
+		TransportRequest{Action: ActionGetStatus, Payload: map[string]string{"reference": "ref"}}, &out); err == nil {
+		t.Fatal("expected an error after cancellation")
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if attempts > 1 {
+		t.Errorf("attempts = %d: a cancelled request must not be retried", attempts)
+	}
+}
+
+func assertSDKErrorCategory(t *testing.T, err error, want types.ErrorCategory) *types.SDKError {
+	t.Helper()
+	if err == nil {
+		t.Fatalf("expected an error with category %s, got nil", want)
+	}
+	sdkErr, ok := err.(*types.SDKError)
+	if !ok {
+		t.Fatalf("error %v is %T, want *types.SDKError", err, err)
+	}
+	if sdkErr.Category != want {
+		t.Errorf("category = %s, want %s (message: %s)", sdkErr.Category, want, sdkErr.Message)
+	}
+	return sdkErr
 }
