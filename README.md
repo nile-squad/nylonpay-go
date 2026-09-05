@@ -234,22 +234,49 @@ so a retry replays rather than double-charges.
 
 ## Testing
 
+The suites run through the [Makefile](./Makefile):
+
 ```bash
-go test ./...                              # unit + security suites
-go test -race ./...                        # with the race detector
-go test -tags=integration ./tests/integration/   # needs sandbox credentials
+make test              # unit + security suites
+make test-race         # with the race detector
+make test-integration  # needs sandbox credentials
 ```
+
+Every target sets `GO_ENV=testing`, which is what makes the integration suite
+load `tests/integration/.env`. Calling `go test` directly skips that.
 
 The signing conformance vectors are the gate. If they fail, every live request
 will fail with an opaque `auth` error:
 
 ```bash
-go test -run 'S19' ./internal/crypto/
+make test-crypto
 ```
 
 Integration tests read `NYLONPAY_API_KEY`, `NYLONPAY_API_SECRET`,
 `NYLONPAY_TEST_PHONE`, `NYLONPAY_BASE_URL` and `NYLONPAY_TEST_MODE` (see
 `tests/integration/.env.example`) and skip cleanly when credentials are absent.
+
+### Windows
+
+Windows ships no `make`, so install one first:
+
+```powershell
+winget install ezwinports.make   # or: choco install make, scoop install make
+```
+
+Running the suites from WSL or Git Bash works too.
+
+If you invoke `go test` directly instead, note that the `GO_ENV=testing go test`
+form in the Makefile is POSIX shell syntax and does nothing in `cmd.exe` or
+PowerShell. Set the variable separately:
+
+```powershell
+$env:GO_ENV = "testing"; go test ./... -v
+```
+
+```bat
+set GO_ENV=testing && go test ./... -v
+```
 
 ## License
 
