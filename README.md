@@ -63,6 +63,219 @@ hands back the same client. Pass `Force: true` for a fresh one.
 | `CreateInvoice` | sync | `*InvoiceResponse` |
 | `VerifyWebhookSignature` | utility | `bool` |
 
+### CollectPayment
+
+The async form. It returns as soon as the collection is initiated, with an
+instance that polls in the background.
+
+```go
+method := nylonpay.PaymentMethodMobileMoney
+
+instance, err := client.CollectPayment(ctx, nylonpay.CollectPaymentInput{
+    Amount:      10000,
+    Currency:    nylonpay.UGX,
+    Description: "Order #1234",
+    Customer: nylonpay.Customer{
+        Name:        "Jane Doe",
+        PhoneNumber: "0771234567",
+    },
+    Method:    &method,
+    Reference: "550e8400-e29b-41d4-a716-446655440000",
+})
+if err != nil {
+    return err // your input was invalid
+}
+defer instance.Close()
+```
+
+`Reference` is optional and must be a UUID when supplied; omit it and one is
+generated. See [Tracking a payment with events](#tracking-a-payment-with-events)
+for the handlers, and [References and idempotency](#references-and-idempotency)
+for why the reference matters.
+
+### CollectPaymentAndResolve
+
+The blocking form. One request and one response, no client-side polling unless
+the server's inline budget runs out.
+
+```go
+tx, err := client.CollectPaymentAndResolve(ctx, nylonpay.CollectPaymentInput{
+    Amount:      5000,
+    Currency:    nylonpay.UGX,
+    Description: "Quick payment",
+    Customer: nylonpay.Customer{
+        Name:        "Jane Doe",
+        PhoneNumber: "0771234567",
+    },
+})
+if err != nil {
+    return err
+}
+
+log.Printf("paid: %s (%s)", tx.Reference, tx.Status)
+```
+
+### MakePayout
+
+Disburse funds to a destination account. Same async primitive as
+`CollectPayment`, so the instance behaves identically.
+
+```go
+instance, err := client.MakePayout(ctx, nylonpay.MakePayoutInput{
+    Amount:      50000, // minimum 5000 UGX
+    Currency:    nylonpay.UGX,
+    Description: "Refund for order #1234",
+    Customer: nylonpay.Customer{
+        Name:        "Jane Doe",
+        PhoneNumber: "0771234567",
+    },
+    Destination: nylonpay.Destination{
+        AccountHolderName: "Jane Doe",
+        AccountNumber:     "123456",
+    },
+})
+if err != nil {
+    return err
+}
+defer instance.Close()
+
+tx, err := instance.Wait(ctx)
+```
+
+### MakePayoutAndResolve
+
+The blocking payout.
+
+```go
+tx, err := client.MakePayoutAndResolve(ctx, nylonpay.MakePayoutInput{
+    Amount:      50000,
+    Currency:    nylonpay.UGX,
+    Description: "Refund",
+    Customer: nylonpay.Customer{
+        Name:        "Jane Doe",
+        PhoneNumber: "0771234567",
+    },
+    Destination: nylonpay.Destination{
+        AccountHolderName: "Jane Doe",
+        AccountNumber:     "123456",
+    },
+})
+```
+
+### Payout lifecycle
+
+`MakePayout` returns immediately with a reference for tracking and idempotent
+retries. The status moves through:
+
+- `TransactionStatusPending` — accepted and queued
+- `TransactionStatusProcessing` — the provider is handling the disbursement
+- `TransactionStatusOnHold` — under review for liquidity or compliance.
+  Non-terminal; it still completes to successful, failed or cancelled
+- `TransactionStatusSuccessful` — funds sent to the destination
+- `TransactionStatusFailed` — failed; funds refunded to your account
+- `TransactionStatusCancelled` — cancelled by the merchant
+
+Polling continues through `on_hold`, so a payout under review needs nothing
+special from you. `StatusText` carries the human-readable reason.
+
+```go
+instance.
+    On(nylonpay.PaymentEventProcessing, func(e nylonpay.EventData) {
+        // pending, processing or on_hold
+        if e.Transaction != nil && e.Transaction.Status == nylonpay.TransactionStatusOnHold {
+            if e.Transaction.StatusText != nil {
+                log.Printf("payout under review: %s", *e.Transaction.StatusText)
+            }
+        }
+    }).
+    On(nylonpay.PaymentEventSuccess, func(e nylonpay.EventData) {
+        log.Printf("payout complete: %s", e.Transaction.Reference)
+    })
+
+tx, err := instance.Wait(ctx)
+```
+
+`Transaction` is guaranteed only on the terminal events, so nil-check it on
+`processing`. Webhooks remain the authoritative record: a provider can settle
+after the SDK stops waiting.
+
+### GetStatus
+
+A one-shot status check. It does not poll.
+
+```go
+status, err := client.GetStatus(ctx, nylonpay.GetStatusInput{
+    Reference: "550e8400-e29b-41d4-a716-446655440000",
+})
+if err != nil {
+    return err
+}
+
+log.Printf("status: %s", status.Status)
+```
+
+### GetTransaction
+
+The full record, by `ID` or `Reference`. At least one is required.
+
+```go
+tx, err := client.GetTransaction(ctx, nylonpay.GetTransactionInput{
+    Reference: "550e8400-e29b-41d4-a716-446655440000",
+})
+if err != nil {
+    return err
+}
+
+if tx.FailureReason != nil {
+    log.Printf("failed: %s", *tx.FailureReason)
+}
+```
+
+### VerifyPhone
+
+Pre-validate a number and get the name registered on the account.
+
+```go
+verification, err := client.VerifyPhone(ctx, nylonpay.VerifyPhoneInput{
+    PhoneNumber: "0771234567",
+})
+if err != nil {
+    return err
+}
+
+if verification.Verified {
+    log.Printf("registered to: %s", verification.CustomerName)
+}
+```
+
+### CreateInvoice
+
+Generate a hosted payment link. This is the supported route for card payments,
+which the SDK deliberately does not accept directly.
+
+```go
+description := "Monthly subscription"
+
+invoice, err := client.CreateInvoice(ctx, nylonpay.CreateInvoiceInput{
+    Amount:        25000,
+    Currency:      nylonpay.UGX,
+    CustomerEmail: "jane@example.com",
+    Description:   &description,
+    Items: []nylonpay.InvoiceItem{
+        {Name: "Pro Plan", Quantity: 1, UnitPrice: 25000},
+    },
+})
+if err != nil {
+    return err
+}
+
+sendEmail(invoice.PaymentLink)
+```
+
+The customer is emailed the link automatically; `PaymentLink` is there for when
+you want to deliver it yourself. Invoices are live-mode only — called with a
+sandbox key, the server returns a validation error.
+
 ### Tracking a payment with events
 
 ```go
@@ -97,6 +310,22 @@ fired is delivered to the new handler immediately.
 `Close` stops polling. Call it on any instance you abandon without waiting,
 otherwise it keeps polling for the life of the process.
 
+`Once` fires a handler at most once and then unsubscribes it. `Off` removes one
+again:
+
+```go
+notify := func(e nylonpay.EventData) {
+    log.Printf("settled: %s", e.Reference)
+}
+
+instance.Once(nylonpay.PaymentEventSuccess, notify)
+instance.Off(nylonpay.PaymentEventSuccess, notify)
+```
+
+Handlers are matched by function identity, and two closures made from the same
+function literal share it — so `Off` would remove both. Give a handler you
+intend to remove its own variable, as above.
+
 **Where failures arrive.** The error returned by `CollectPayment` and
 `MakePayout` is only ever about your input. A rejection by the server means no
 transaction was created, and it reaches you as an `error` event on the instance.
@@ -111,6 +340,29 @@ A payment in flight for more than about three minutes is flagged `Delayed`.
 `OnDelayed: nylonpay.OnDelayedReturn` resolves with the still-pending record so
 you can rely on webhooks instead of waiting.
 
+```go
+client, err := nylonpay.NewClient(nylonpay.Config{
+    APIKey:    os.Getenv("NYLONPAY_API_KEY"),
+    APISecret: os.Getenv("NYLONPAY_API_SECRET"),
+    OnDelayed: nylonpay.OnDelayedReturn,
+})
+if err != nil {
+    log.Fatal(err)
+}
+
+tx, err := client.CollectPaymentAndResolve(ctx, input)
+if err != nil {
+    return err
+}
+
+if tx.Delayed != nil && *tx.Delayed && tx.Status == nylonpay.TransactionStatusPending {
+    // still in flight; the outcome will arrive by webhook
+}
+```
+
+`Delayed` is a flag, not a status: the payment is still pending. Set
+`MaxPollDuration` instead if you would rather keep waiting but bound how long.
+
 ### References and idempotency
 
 The reference is the transaction's identity and the only idempotency mechanism.
@@ -118,9 +370,9 @@ Reusing one replays the existing transaction instead of charging again, which is
 what makes retrying a network failure safe; a fresh reference always starts a
 fresh payment.
 
-A supplied reference must be **13–15 characters**. Omit it and one is generated.
-The usual mistake is passing a 36-character UUID order id — hash or truncate it
-first.
+A supplied reference must be a **UUID**. Omit it and one is generated. If your
+own order ids are in another format, derive a UUID from yours or keep the
+generated reference alongside your order.
 
 ### Webhooks
 
@@ -208,6 +460,12 @@ A `before*` hook's output is re-run through the full validation and
 normalization suite, so it cannot smuggle a bad reference or a sub-minimum
 amount past the checks. An `after*` hook runs whether the call succeeded or not.
 Set `Enabled` to `false` to switch one off without removing it.
+
+## Supported currencies
+
+`USD`, `EUR`, `GBP`, `KES`, `UGX`, `TZS` and `RWF`, as the constants
+`nylonpay.USD` through `nylonpay.RWF`. Amounts are always integers in the
+smallest unit of the currency.
 
 ## Configuration
 
