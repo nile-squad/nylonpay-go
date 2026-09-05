@@ -3,30 +3,31 @@ package nylonpay
 import (
 	"crypto/rand"
 	"encoding/hex"
-	"unicode/utf8"
+	"regexp"
 
 	"github.com/nile-squad/nylonpay-go/types"
 )
 
-// A reference is echoed verbatim to the provider as its merchantTransactionId,
-// which is bounded to this range. Anything outside it is rejected.
-const (
-	referenceMinLength = 13
-	referenceMaxLength = 15
+// referencePattern matches a reference, which the backend requires to be a
+// UUID. Any version is accepted; generated references are v4.
+//
+// The anchors are \A and \z, not ^ and $, so the match is against the whole
+// string and nothing else. Every Nylon Pay SDK must accept exactly the same set
+// of reference strings, and an end-anchor that also matched before a trailing
+// newline would let "<uuid>\n" through in one language and not another.
+var referencePattern = regexp.MustCompile(
+	`\A[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\z`,
 )
 
-// validateReferenceLength enforces the 13-15 character bound synchronously, so
-// an out-of-range reference never costs a network round-trip.
+// validateReferenceFormat enforces the UUID shape synchronously, so a malformed
+// reference never costs a network round-trip.
 //
-// Length is counted in characters, not bytes, so every Nylon Pay SDK accepts
-// exactly the same set of reference strings regardless of encoding.
-//
-// The usual way to trip this is passing a 36-character UUID order id. Hash or
-// truncate it to 15 characters or fewer first.
-func validateReferenceLength(reference string) error {
-	length := utf8.RuneCountInString(reference)
-	if length < referenceMinLength || length > referenceMaxLength {
-		return validationErr("reference must be %d-%d characters", referenceMinLength, referenceMaxLength)
+// The usual way to trip this is passing an order id in your own format. Derive
+// a UUID from it, or omit the reference and keep the generated one alongside
+// your order.
+func validateReferenceFormat(reference string) error {
+	if !referencePattern.MatchString(reference) {
+		return validationErr("reference must be a valid UUID")
 	}
 	return nil
 }
@@ -41,16 +42,16 @@ func resolveReference(reference string) (string, error) {
 	if reference == "" {
 		return generateReference()
 	}
-	if err := validateReferenceLength(reference); err != nil {
+	if err := validateReferenceFormat(reference); err != nil {
 		return "", err
 	}
 	return reference, nil
 }
 
-// generateReference produces a 15-character reference from a cryptographic
-// source, so references are unique across rapid sequential calls.
+// generateReference produces a v4 UUID from a cryptographic source, so
+// references are unique across rapid sequential calls.
 func generateReference() (string, error) {
-	buf := make([]byte, 8)
+	buf := make([]byte, 16)
 	if _, err := rand.Read(buf); err != nil {
 		// Never silently fall back to a predictable value: a fixed reference
 		// would collide with every other call and replay someone else's
@@ -60,5 +61,11 @@ func generateReference() (string, error) {
 			Message:  "Could not generate a transaction reference",
 		}
 	}
-	return hex.EncodeToString(buf)[:referenceMaxLength], nil
+
+	buf[6] = buf[6]&0x0f | 0x40 // version 4
+	buf[8] = buf[8]&0x3f | 0x80 // RFC 4122 variant
+
+	encoded := hex.EncodeToString(buf)
+	return encoded[0:8] + "-" + encoded[8:12] + "-" + encoded[12:16] + "-" +
+		encoded[16:20] + "-" + encoded[20:32], nil
 }

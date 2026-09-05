@@ -169,10 +169,10 @@ func (c *NylonPayClient) prepareInvoice(input types.CreateInvoiceInput) (types.C
 		input.CustomerPhone = &normalized
 	}
 
-	// A merchant reference is optional here, but when supplied it is bound by
-	// the same 13-15 character limit as any other reference.
+	// A merchant reference is optional here, but when supplied it must be a
+	// UUID like any other reference.
 	if input.MerchantReference != "" {
-		if err := validateReferenceLength(input.MerchantReference); err != nil {
+		if err := validateReferenceFormat(input.MerchantReference); err != nil {
 			return input, err
 		}
 	}

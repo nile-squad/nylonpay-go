@@ -184,21 +184,26 @@ func TestCollectPayment_BankMethodWithBankDetails(t *testing.T) {
 	}
 }
 
-// ── Reference bounds ──────────────────────────────────────────────────────────
+// ── Reference format ──────────────────────────────────────────────────────────
 
-func TestCollectPayment_ReferenceTooShort(t *testing.T) {
-	collectRejects(t, func(in *nylonpay.CollectPaymentInput) { in.Reference = "123456789012" }) // 12
+func TestCollectPayment_NonUUIDReferenceIsRejected(t *testing.T) {
+	collectRejects(t, func(in *nylonpay.CollectPaymentInput) { in.Reference = "ORDER-2026-001" })
 }
 
-func TestCollectPayment_ReferenceTooLong(t *testing.T) {
-	collectRejects(t, func(in *nylonpay.CollectPaymentInput) { in.Reference = "1234567890123456" }) // 16
+// The format the SDK generated before references became UUIDs.
+func TestCollectPayment_FifteenCharReferenceIsRejected(t *testing.T) {
+	collectRejects(t, func(in *nylonpay.CollectPaymentInput) { in.Reference = "a1b2c3d4e5f6789" })
 }
 
-// The classic mistake the spec calls out by name.
-func TestCollectPayment_UUIDReferenceIsRejected(t *testing.T) {
-	collectRejects(t, func(in *nylonpay.CollectPaymentInput) {
-		in.Reference = "7c9e6679-7425-40de-944b-e07fc1f90ae7"
-	})
+// A UUID is what the backend requires, so validation must let it through.
+func TestCollectPayment_UUIDReferenceIsAccepted(t *testing.T) {
+	input := validCollectInput()
+	input.Reference = "7c9e6679-7425-40de-944b-e07fc1f90ae7"
+	// The call fails at the network against an unreachable BaseURL; only a
+	// validation error would mean the reference itself was refused.
+	if _, err := testClient(t).CollectPayment(bgCtx, input); isValidationError(err) {
+		t.Fatalf("a UUID reference must pass validation, got: %v", err)
+	}
 }
 
 // ── GetStatus / GetTransaction / VerifyPhone ──────────────────────────────────
@@ -281,11 +286,28 @@ func TestCreateInvoice_ItemNonPositiveUnitPrice(t *testing.T) {
 	}
 }
 
-func TestCreateInvoice_MerchantReferenceOutOfRange(t *testing.T) {
+func TestCreateInvoice_NonUUIDMerchantReferenceIsRejected(t *testing.T) {
 	input := validInvoiceInput()
-	input.MerchantReference = "too-short"
+	input.MerchantReference = "not-a-uuid"
 	_, err := testClient(t).CreateInvoice(bgCtx, input)
 	assertSDKError(t, err, nylonpay.CategoryValidation)
+}
+
+// The field is optional, so an empty value must not trip the UUID check.
+func TestCreateInvoice_EmptyMerchantReferenceIsAccepted(t *testing.T) {
+	input := validInvoiceInput()
+	input.MerchantReference = ""
+	if _, err := testClient(t).CreateInvoice(bgCtx, input); isValidationError(err) {
+		t.Fatalf("an omitted merchantReference must pass validation, got: %v", err)
+	}
+}
+
+func TestCreateInvoice_UUIDMerchantReferenceIsAccepted(t *testing.T) {
+	input := validInvoiceInput()
+	input.MerchantReference = "7c9e6679-7425-40de-944b-e07fc1f90ae7"
+	if _, err := testClient(t).CreateInvoice(bgCtx, input); isValidationError(err) {
+		t.Fatalf("a UUID merchantReference must pass validation, got: %v", err)
+	}
 }
 
 // ── Listing ───────────────────────────────────────────────────────────────────

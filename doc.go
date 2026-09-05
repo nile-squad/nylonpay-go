@@ -71,9 +71,9 @@
 // again, which is what makes retrying a network failure safe. A fresh reference
 // always starts a fresh payment.
 //
-// A supplied reference must be 13-15 characters; omit it and one is generated.
-// The usual mistake is passing a 36-character UUID order id, so hash or
-// truncate yours first.
+// A supplied reference must be a UUID; omit it and one is generated. If your
+// own order ids are in another format, derive a UUID from yours or keep the
+// generated reference alongside your order.
 //
 // # Error handling
 //

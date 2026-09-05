@@ -142,7 +142,7 @@ type CollectPaymentInput struct {
 	// Description is the narration the customer sees.
 	Description string `json:"description"`
 	// Reference is the transaction identity and the only idempotency mechanism.
-	// It must be 13-15 characters; one is generated when omitted. Reusing a
+	// It must be a UUID; one is generated when omitted. Reusing a
 	// reference replays the existing transaction rather than charging again.
 	Reference string         `json:"reference,omitempty"`
 	Method    *PaymentMethod `json:"method,omitempty"`
@@ -160,7 +160,7 @@ type MakePayoutInput struct {
 	Customer    Customer    `json:"customer"`
 	Destination Destination `json:"destination"`
 	Description string      `json:"description"`
-	// Reference must be 13-15 characters; one is generated when omitted.
+	// Reference must be a UUID; one is generated when omitted.
 	Reference string            `json:"reference,omitempty"`
 	Tags      []string          `json:"tags,omitempty"`
 	Metadata  map[string]string `json:"metadata,omitempty"`
@@ -184,7 +184,7 @@ type CreateInvoiceInput struct {
 	DueDate *string       `json:"dueDate,omitempty"`
 	Items   []InvoiceItem `json:"items,omitempty"`
 	// MerchantReference is stored on the transaction for reconciliation. When
-	// supplied it must be 13-15 characters.
+	// supplied it must be a UUID.
 	MerchantReference string            `json:"merchantReference,omitempty"`
 	Tags              []string          `json:"tags,omitempty"`
 	Metadata          map[string]string `json:"metadata,omitempty"`

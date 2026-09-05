@@ -95,15 +95,90 @@ func requireLiveMode(t *testing.T) {
 	}
 }
 
-// uniqueReference returns a fresh 15-character reference, so tests never
-// collide with each other's idempotency.
+// uniqueReference returns a fresh v4 UUID, so tests never collide with each
+// other's idempotency.
+//
+// This deliberately does not call the SDK's own generator: a test that borrows
+// the code under test cannot catch a generator that drifted off the format the
+// backend accepts.
 func uniqueReference(t *testing.T) string {
 	t.Helper()
-	buf := make([]byte, 8)
+	buf := make([]byte, 16)
 	if _, err := rand.Read(buf); err != nil {
 		t.Fatalf("reference generation failed: %v", err)
 	}
-	return hex.EncodeToString(buf)[:15]
+
+	buf[6] = buf[6]&0x0f | 0x40 // version 4
+	buf[8] = buf[8]&0x3f | 0x80 // RFC 4122 variant
+
+	encoded := hex.EncodeToString(buf)
+	return encoded[0:8] + "-" + encoded[8:12] + "-" + encoded[12:16] + "-" +
+		encoded[16:20] + "-" + encoded[20:32]
+}
+
+// requireNoImmediateError fails the test if initiation was rejected by the
+// server.
+//
+// A create call reports a server-side rejection on the instance rather than
+// returning it, and populates Reference() from the input either way. So a
+// payment the backend refused outright still passes a Reference() check; the
+// error event is the only place the refusal is visible. Without this, a suite
+// running against a backend that rejects every request reports green.
+func requireNoImmediateError(t *testing.T, instance *nylonpay.PaymentInstance) {
+	t.Helper()
+
+	failure := make(chan error, 1)
+	instance.Once(types.PaymentEventError, func(data types.EventData) {
+		select {
+		case failure <- data.Err:
+		default:
+		}
+	})
+
+	select {
+	case err := <-failure:
+		t.Fatalf("initiation was rejected: %v", err)
+	case <-time.After(2 * time.Second):
+	}
+}
+
+// getTransactionEventually looks a transaction up, tolerating a not_found while
+// the write propagates to the read path.
+//
+// The SDK's own poller makes the same allowance for the same reason. A direct
+// lookup issued immediately after initiation does not, which turns ordinary
+// replication lag into a failed test. Any other error returns straight away, so
+// a real failure still fails fast.
+func getTransactionEventually(
+	t *testing.T,
+	client nylonpay.Client,
+	ctx context.Context,
+	reference string,
+) (*types.Transaction, error) {
+	t.Helper()
+
+	const (
+		attempts = 15
+		interval = time.Second
+	)
+
+	var err error
+	for attempt := range attempts {
+		var transaction *types.Transaction
+		transaction, err = client.GetTransaction(ctx, types.GetTransactionInput{Reference: reference})
+		if err == nil {
+			return transaction, nil
+		}
+
+		var sdkErr *nylonpay.SDKError
+		if !errors.As(err, &sdkErr) || sdkErr.Category != types.CategoryNotFound {
+			return nil, err
+		}
+		if attempt < attempts-1 {
+			time.Sleep(interval)
+		}
+	}
+	return nil, err
 }
 
 func testContext(t *testing.T) context.Context {
@@ -161,6 +236,7 @@ func TestI1_CollectPaymentHappyPath(t *testing.T) {
 		t.Fatalf("I1: client-side validation failed: %v", err)
 	}
 	defer instance.Close()
+	requireNoImmediateError(t, instance)
 
 	if instance.Reference() != reference {
 		t.Errorf("I1: reference = %q, want %q", instance.Reference(), reference)
@@ -179,8 +255,9 @@ func TestI2_GetTransactionAfterCollect(t *testing.T) {
 		t.Fatalf("I2: collect failed: %v", err)
 	}
 	defer instance.Close()
+	requireNoImmediateError(t, instance)
 
-	transaction, err := client.GetTransaction(ctx, types.GetTransactionInput{Reference: reference})
+	transaction, err := getTransactionEventually(t, client, ctx, reference)
 	if err != nil {
 		t.Fatalf("I2: lookup failed: %v", err)
 	}
@@ -204,19 +281,21 @@ func TestI3_IdempotencyOnCollect(t *testing.T) {
 		t.Fatalf("I3: first collect failed: %v", err)
 	}
 	defer first.Close()
+	requireNoImmediateError(t, first)
 
 	second, err := client.CollectPayment(ctx, input)
 	if err != nil {
 		t.Fatalf("I3: second collect failed: %v", err)
 	}
 	defer second.Close()
+	requireNoImmediateError(t, second)
 
 	if first.Reference() != second.Reference() {
 		t.Errorf("I3: reusing a reference produced two transactions: %q and %q",
 			first.Reference(), second.Reference())
 	}
 
-	transaction, err := client.GetTransaction(ctx, types.GetTransactionInput{Reference: reference})
+	transaction, err := getTransactionEventually(t, client, ctx, reference)
 	if err != nil {
 		t.Fatalf("I3: lookup failed: %v", err)
 	}
@@ -236,6 +315,7 @@ func TestI4_MakePayoutHappyPath(t *testing.T) {
 		t.Fatalf("I4: client-side validation failed: %v", err)
 	}
 	defer instance.Close()
+	requireNoImmediateError(t, instance)
 
 	if instance.Reference() != reference {
 		t.Errorf("I4: reference = %q, want %q", instance.Reference(), reference)
@@ -251,8 +331,9 @@ func TestI5_GetTransactionAfterPayout(t *testing.T) {
 		t.Fatalf("I5: payout failed: %v", err)
 	}
 	defer instance.Close()
+	requireNoImmediateError(t, instance)
 
-	transaction, err := client.GetTransaction(ctx, types.GetTransactionInput{Reference: reference})
+	transaction, err := getTransactionEventually(t, client, ctx, reference)
 	if err != nil {
 		t.Fatalf("I5: lookup failed: %v", err)
 	}
@@ -271,12 +352,14 @@ func TestI6_IdempotencyOnPayout(t *testing.T) {
 		t.Fatalf("I6: first payout failed: %v", err)
 	}
 	defer first.Close()
+	requireNoImmediateError(t, first)
 
 	second, err := client.MakePayout(ctx, input)
 	if err != nil {
 		t.Fatalf("I6: second payout failed: %v", err)
 	}
 	defer second.Close()
+	requireNoImmediateError(t, second)
 
 	if first.Reference() != second.Reference() {
 		t.Errorf("I6: reusing a reference produced two payouts: %q and %q",
@@ -531,8 +614,15 @@ func TestI17_ResolveReturnsFullTransaction(t *testing.T) {
 	reference := uniqueReference(t)
 
 	transaction, err := client.CollectPaymentAndResolve(ctx, collectInput(t, reference))
+	// A payment that reached a terminal failure still carries its full record,
+	// and that is what this test is about. A request the server refused
+	// outright is a different thing and returns no record at all, so report
+	// that error rather than the nil it left behind.
+	if err != nil && categoryOf(t, err) != types.CategoryProvider {
+		t.Fatalf("I17: resolve was rejected: %v", err)
+	}
 	if transaction == nil {
-		t.Fatalf("I17: expected a transaction even on failure, got nil (err: %v)", err)
+		t.Fatalf("I17: expected a transaction even for a failed payment, got nil (err: %v)", err)
 	}
 
 	if transaction.ID == "" {
@@ -569,8 +659,9 @@ func TestI18_MetadataRoundTrip(t *testing.T) {
 		t.Fatalf("I18: collect failed: %v", err)
 	}
 	defer instance.Close()
+	requireNoImmediateError(t, instance)
 
-	transaction, err := client.GetTransaction(ctx, types.GetTransactionInput{Reference: reference})
+	transaction, err := getTransactionEventually(t, client, ctx, reference)
 	if err != nil {
 		t.Fatalf("I18: lookup failed: %v", err)
 	}
@@ -592,6 +683,7 @@ func TestI19_PollingReachesTerminal(t *testing.T) {
 		t.Fatalf("I19: collect failed: %v", err)
 	}
 	defer instance.Close()
+	requireNoImmediateError(t, instance)
 
 	// Wait must return rather than hang; whether the payment succeeded is the
 	// sandbox provider's business, not this test's.

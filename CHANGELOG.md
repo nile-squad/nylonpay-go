@@ -87,6 +87,18 @@ on an error.
 
 ### Breaking
 
+- **The `reference` is now a UUID.** It was validated as 13-15 characters and
+  auto-generated as 15 hex characters, which the backend rejects outright with
+  `reference must be a valid UUID`. Every collection and payout therefore failed
+  against a live backend, and because a create call reports a server rejection
+  on the instance rather than returning it, the failure surfaced downstream as a
+  `not_found` on the follow-up lookup rather than at the call that caused it.
+  References are now validated as UUIDs (any version) and generated as v4,
+  matching the backend and the TypeScript reference SDK. Merchant order ids in
+  another format must be converted to a UUID, or the generated reference kept
+  alongside the order. Applies everywhere a reference is accepted, including
+  `CreateInvoiceInput.MerchantReference`. Note that spec `operations.md` still
+  documents the old 13-15 rule; it is being corrected separately.
 - **`SDKError` is now importable.** It lived in `internal/core`, so no consumer
   could `errors.As` it — while the README and package docs both instructed
   exactly that, with a snippet that could not compile. It now lives in `types`
