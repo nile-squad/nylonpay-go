@@ -500,8 +500,17 @@ make test-race         # with the race detector
 make test-integration  # needs sandbox credentials
 ```
 
-Every target sets `GO_ENV=testing`, which is what makes the integration suite
-load `tests/integration/.env`. Calling `go test` directly skips that.
+`make test-integration` needs sandbox credentials in a `.env` file at the
+project root:
+
+```bash
+cp .env.example .env   # then fill in your sandbox key and secret
+```
+
+Every target sets `GO_ENV=testing`, which is what makes the suite read that
+file; calling `go test` directly skips the load entirely. `tests/integration/.env`
+is used instead when present, and the run logs which of the two it loaded. With
+neither file the suite skips rather than fails.
 
 The signing conformance vectors are the gate. If they fail, every live request
 will fail with an opaque `auth` error:
@@ -512,7 +521,8 @@ make test-crypto
 
 Integration tests read `NYLONPAY_API_KEY`, `NYLONPAY_API_SECRET`,
 `NYLONPAY_TEST_PHONE`, `NYLONPAY_BASE_URL` and `NYLONPAY_TEST_MODE` (see
-`tests/integration/.env.example`) and skip cleanly when credentials are absent.
+`.env.example`) and skip cleanly when credentials are absent. `NYLONPAY_REVOKED_API_KEY`
+and `NYLONPAY_REVOKED_API_SECRET` enable I15 in live mode.
 
 ### Windows
 
@@ -529,12 +539,15 @@ form in the Makefile is POSIX shell syntax and does nothing in `cmd.exe` or
 PowerShell. Set the variable separately:
 
 ```powershell
-$env:GO_ENV = "testing"; go test ./... -v
+$env:GO_ENV = "testing"; go test -tags=integration ./tests/integration/ -v
 ```
 
 ```bat
-set GO_ENV=testing && go test ./... -v
+set GO_ENV=testing && go test -tags=integration ./tests/integration/ -v
 ```
+
+Without `-tags=integration` the suite is excluded at compile time and you get a
+passing run that tested nothing.
 
 ## License
 

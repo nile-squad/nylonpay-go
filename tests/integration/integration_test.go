@@ -19,6 +19,7 @@ import (
 	"errors"
 	"log"
 	"os"
+	"sync"
 	"testing"
 	"time"
 
@@ -33,20 +34,36 @@ const (
 	resolveTimeout = 90 * time.Second
 )
 
-// newClient builds a fresh client per test. Force bypasses the singleton cache
-// so no state leaks between tests.
+// envFiles are searched in order: the package directory, since go test runs
+// each binary with CWD set there, then the module root two levels up.
+var envFiles = []string{".env", "../../.env"}
+
+var loadEnvOnce sync.Once
+
+// loadEnv reads credentials from the first .env it finds, once per run. A
+// missing file is not an error - the suite skips instead, so a fresh clone
+// with no credentials still passes.
+func loadEnv() {
+	loadEnvOnce.Do(func() {
+		if os.Getenv("GO_ENV") != "testing" {
+			return
+		}
+		for _, path := range envFiles {
+			if err := godotenv.Load(path); err == nil {
+				log.Printf("loaded env from %s", path)
+				return
+			}
+		}
+		log.Println("no .env found; using the exported environment")
+	})
+}
+
 // requireCredentials skips a test unless sandbox credentials are configured,
 // and returns them.
 func requireCredentials(t *testing.T) (string, string) {
 	t.Helper()
 
-	if os.Getenv("GO_ENV") == "testing" {
-		err := godotenv.Load()
-		if err != nil {
-			log.Fatalf("Error loading .env file")
-		}
-		log.Println("Loaded .env var file")
-	}
+	loadEnv()
 
 	apiKey := os.Getenv("NYLONPAY_API_KEY")
 	apiSecret := os.Getenv("NYLONPAY_API_SECRET")
@@ -58,6 +75,8 @@ func requireCredentials(t *testing.T) (string, string) {
 	return apiKey, apiSecret
 }
 
+// newClient builds a fresh client per test. Force bypasses the singleton cache
+// so no state leaks between tests.
 func newClient(t *testing.T) *nylonpay.NylonPayClient {
 	t.Helper()
 
