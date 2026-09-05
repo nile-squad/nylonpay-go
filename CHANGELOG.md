@@ -2,12 +2,28 @@
 
 All notable changes to `nylonpay-go` are documented here.
 
-## [2.0.0] — Unreleased
+## [0.1.1] — 2026-09-06
 
-Brings the Go SDK up to Nylon Pay SDK spec v2.1.0. This release is a breaking
-overhaul: the previous API could not sign a request the backend would accept for
-a wide class of ordinary payloads, and exposed no way for a merchant to branch
-on an error.
+### Changed
+
+- Integration tests load a `.env` from the project root, falling back to
+  `tests/integration/.env` when that is the one present, and log which file was
+  loaded.
+- README documents the credential setup and the `-tags=integration` flag the
+  Windows invocations were missing — without it the suite is excluded at compile
+  time and reports a passing run that tested nothing.
+- `.env.example` gains optional `NYLONPAY_REVOKED_API_KEY` /
+  `NYLONPAY_REVOKED_API_SECRET`, which enable I15 in live mode.
+
+## [0.1.0] — 2026-09-05
+
+First published release, tagged as `v0.1.0`. The module is pre-1.0, so the API
+may still break between minor versions; the SDK spec it targets is versioned
+separately, and this release brings the Go SDK up to Nylon Pay SDK spec v2.1.0.
+
+It is a breaking overhaul of the untagged code that preceded it: that API could
+not sign a request the backend would accept for a wide class of ordinary
+payloads, and exposed no way for a merchant to branch on an error.
 
 ### Fixed — signing (any earlier version could not talk to the backend reliably)
 
